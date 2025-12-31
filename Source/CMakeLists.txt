@@ -1,61 +1,96 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.15)
+
+# macOS deployment target needs to be set before 'project' to work
+if(APPLE AND NOT TARGET_IOS)
+	set(CMAKE_OSX_DEPLOYMENT_TARGET "16" CACHE STRING "Minimum OS X deployment version")
+endif()
+
+project(Play)
+
+include(GNUInstallDirs)
 
 set(CMAKE_MODULE_PATH
-	${CMAKE_CURRENT_SOURCE_DIR}/../deps/Dependencies/cmake-modules
+	${CMAKE_CURRENT_SOURCE_DIR}/deps/Dependencies/cmake-modules
 	${CMAKE_MODULE_PATH}
 )
 include(Header)
 
-project(PlayCore)
+set(BUILD_PLAY ON CACHE BOOL "Build Play! Emulator")
+set(BUILD_PSFPLAYER OFF CACHE BOOL "Build PsfPlayer")
+set(BUILD_TESTS ON CACHE BOOL "Build Tests")
+set(USE_AOT_CACHE OFF CACHE BOOL "Use AOT block cache")
+set(BUILD_AOT_CACHE OFF CACHE BOOL "Build AOT block cache (for PsfPlayer only)")
+set(BUILD_LIBRETRO_CORE OFF CACHE BOOL "Build Libretro Core")
 
+set(PROJECT_NAME "Play!")
+set(PROJECT_Version 0.30)
+
+if(BUILD_TESTS)
+	enable_testing()
+endif()
+
+find_package(Git)
+if(GIT_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git/")
+	execute_process(COMMAND ${GIT_EXECUTABLE} describe --always
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+		RESULT_VARIABLE GIT_DESCRIBE_RESULT
+		OUTPUT_VARIABLE GIT_TAG
+		OUTPUT_STRIP_TRAILING_WHITESPACE
+	)
+	if(GIT_DESCRIBE_RESULT EQUAL 0)
+		message("Building for ${GIT_TAG}.")
+		set(PROJECT_Version ${GIT_TAG})
+	else()
+		message("Warning: Failed to obtain Git tag.")
+	endif()
+else()
+	message("Warning: Not a git repo or git not found.")
+endif()
+
+add_definitions(-DPLAY_VERSION="${PROJECT_Version}")
 set(PROJECT_LIBS)
-set(DEFINITIONS_LIST)
 
 include(PrecompiledHeader)
 
-set(ENABLE_AMAZON_S3 ON CACHE BOOL "Enable loading disc from Amazon S3 servers")
-
-if(DEBUGGER_INCLUDED)
-	list(APPEND DEFINITIONS_LIST DEBUGGER_INCLUDED=1)
-endif()
-if(PROFILE)
-	list(APPEND DEFINITIONS_LIST PROFILE=1)
-endif()
-list(APPEND DEFINITIONS_LIST _IOP_EMULATE_MODULES=1)
-
-if(USE_AOT_CACHE)
-	list(APPEND DEFINITIONS_LIST AOT_USE_CACHE=1)
+if(BUILD_LIBRETRO_CORE)
+	if(NOT MSVC)
+		add_compile_options($<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-fPIC>)
+	endif()
+	add_subdirectory(Source/ui_libretro)
 endif()
 
-if(BUILD_AOT_CACHE)
-	list(APPEND DEFINITIONS_LIST AOT_BUILD_CACHE=1)
+if(BUILD_PLAY)
+	if(TARGET_PLATFORM_UNIX OR TARGET_PLATFORM_MACOS OR TARGET_PLATFORM_WIN32 OR USE_QT)
+		add_subdirectory(Source/ui_qt/)
+		add_subdirectory(tools/ElfView)
+	endif(TARGET_PLATFORM_UNIX OR TARGET_PLATFORM_MACOS OR TARGET_PLATFORM_WIN32 OR USE_QT)
+
+	if(NOT USE_QT)
+		if(TARGET_PLATFORM_IOS)
+			add_subdirectory(Source/ui_ios/)
+		endif(TARGET_PLATFORM_IOS)
+
+		if(TARGET_PLATFORM_ANDROID)
+			add_subdirectory(Source/ui_android/)
+		endif(TARGET_PLATFORM_ANDROID)
+
+		if(TARGET_PLATFORM_JS)
+			add_subdirectory(Source/ui_js)
+		endif(TARGET_PLATFORM_JS)
+	endif()
+endif(BUILD_PLAY)
+
+if(BUILD_TESTS)
+	add_subdirectory(tools/AutoTest/)
+	add_subdirectory(tools/GsAreaTest/)
+	add_subdirectory(tools/McServTest/)
+	add_subdirectory(tools/SpuTest/)
+	add_subdirectory(tools/VuTest/)
+	add_subdirectory(deps/Framework/build_cmake/Tests)
 endif()
 
-if(TARGET_PLATFORM_UNIX AND NOT TARGET_PLATFORM_UNIX_ARM AND NOT TARGET_PLATFORM_UNIX_AARCH64)
-	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -msse -msse2 -mssse3")
-endif()
+add_subdirectory(tools/NamcoSys147NANDTools)
 
-# targets, packages and dependencies
-if(NOT TARGET Framework)
-	add_subdirectory(
-		${CMAKE_CURRENT_SOURCE_DIR}/../deps/Framework/build_cmake/Framework
-		${CMAKE_CURRENT_BINARY_DIR}/Framework
-		EXCLUDE_FROM_ALL
-	)
-endif()
-list(APPEND PROJECT_LIBS Framework)
-
-if(NOT TARGET Framework_Http)
-	add_subdirectory(
-		${CMAKE_CURRENT_SOURCE_DIR}/../deps/Framework/build_cmake/FrameworkHttp
-		${CMAKE_CURRENT_BINARY_DIR}/FrameworkHttp
-	)
-endif()
-list(APPEND PROJECT_LIBS Framework_Http)
-
-if(NOT TARGET app_shared)
-	add_subdirectory(
-		${CMAKE_CURRENT_SOURCE_DIR}/app_shared
-		${CMAKE_CURRENT_BINARY_DIR}/app_shared
-	)
-endif()
+if(BUILD_PSFPLAYER)
+	add_subdirectory(tools/PsfPlayer)
+endif(BUILD_PSFPLAYER)
