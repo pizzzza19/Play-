@@ -52,32 +52,37 @@ jobs:
           -DBUILD_PSFPLAYER=ON \
           -DUSE_VULKAN=ON
 
-    # 7️⃣ Compiler le projet (CORRIGÉ pour ton fork)
+   # 7️⃣ Compiler le projet (Correction finale de la destination)
     - name: Build
       run: |
         cd build
-        # On cherche spécifiquement Play.xcodeproj et on ignore AutoTest
-        REAL_PROJECT=$(find . -name "Play.xcodeproj" -not -path "*/AutoTest/*" | head -n 1)
-        echo "Projet utilisé : $REAL_PROJECT"
-
-        xcodebuild \
-          -project "$REAL_PROJECT" \
+        # Localisation précise du projet pour éviter toute confusion
+        PROJECT_PATH=$(find . -name "Play.xcodeproj" -not -path "*/AutoTest/*" | head -n 1)
+        
+        # Build avec destination générique et désactivation forcée de la signature
+        xcodebuild build \
+          -project "$PROJECT_PATH" \
           -scheme Play \
           -configuration Release \
+          -destination 'generic/platform=iOS' \
           -sdk iphoneos \
           CODE_SIGNING_ALLOWED=NO \
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGN_IDENTITY="" \
+          AD_HOC_CODE_SIGNING_ALLOWED=YES \
           ENABLE_BITCODE=NO \
           -skipPackagePluginValidation \
           -skipMacroValidation
 
-        # Recherche du binaire .app dans le dossier de sortie
-        APP_PATH=$(find . -name "Play.app" -type d -path "*/Release-iphoneos/*" | head -n 1)
+        # Recherche du binaire .app
+        # On utilise une recherche plus large pour capturer le dossier Release
+        APP_PATH=$(find $(pwd) -name "Play.app" -type d | grep "Release-iphoneos" | head -n 1)
+        
         if [ -d "$APP_PATH" ]; then
           echo "APP_FINAL_PATH=$APP_PATH" >> $GITHUB_ENV
         else
-          echo "ERREUR : Play.app introuvable"
+          echo "ERREUR : Play.app introuvable."
+          find . -name "*.app" # Pour voir où il est si le chemin a changé
           exit 1
         fi
 
