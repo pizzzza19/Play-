@@ -15,13 +15,15 @@ set(CMAKE_MODULE_PATH
 include(Header)
 
 if(APPLE AND TARGET_PLATFORM_IOS)
+    add_definitions(-DPLAY_IOS_JIT=1 -DENABLE_JIT=1)
+
     list(APPEND SOURCES 
         Core/JIT/JitManager.mm
         Core/JIT/JitMemory.cpp
     )
+
     set_source_files_properties(Core/JIT/JitManager.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
 endif()
-
 set(BUILD_PLAY ON CACHE BOOL "Build Play! Emulator")
 set(BUILD_PSFPLAYER OFF CACHE BOOL "Build PsfPlayer")
 set(BUILD_TESTS ON CACHE BOOL "Build Tests")
