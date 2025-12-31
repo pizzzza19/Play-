@@ -1,4 +1,4 @@
-name: Build iOS 26
+name: Build iOS 26 (Sideloadable)
 
 on: [push, pull_request, workflow_dispatch]
 
@@ -9,7 +9,7 @@ jobs:
     - name: Set Xcode version
       uses: maxim-lobanov/setup-xcode@v1
       with:
-        xcode-version: '16.2' # Version recommandée pour iOS 26.x
+        xcode-version: '16.2'
 
     - name: Checkout Code
       uses: actions/checkout@v4
@@ -17,40 +17,49 @@ jobs:
         submodules: recursive
         fetch-depth: 0
 
-    - name: Install Vulkan SDK (Version 1.4+)
+    - name: Install Vulkan SDK (Optional)
       run: |
         VULKAN_VER="1.4.304.1"
         curl -L -A "Mozilla/5.0" "https://sdk.lunarg.com/sdk/download/$VULKAN_VER/mac/vulkansdk-macos-$VULKAN_VER.zip" -o vulkansdk.zip
         unzip -q vulkansdk.zip
-        sudo ./InstallVulkan-$VULKAN_VER.app/Contents/MacOS/InstallVulkan-$VULKAN_VER in --al --c com.lunarg.vulkan.ios
         echo "VULKAN_SDK=${HOME}/VulkanSDK/$VULKAN_VER/iOS" >> $GITHUB_ENV
 
-    - name: Generate CMake Project
+    - name: Generate Xcode Project with CMake
       run: |
+        rm -rf build
         mkdir build
         cd build
-        cmake .. -G"Xcode" \
+        cmake .. -G Xcode \
                  -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake \
                  -DTARGET_IOS=ON \
                  -DCMAKE_OSX_ARCHITECTURES=arm64 \
-                 -DCMAKE_PREFIX_PATH=$VULKAN_SDK \
-                 -DUSE_VULKAN=ON \
-                 -DVERSION="26.0.0"
+                 -DUSE_VULKAN=ON
 
-    - name: Build and Sign
+    - name: Build Play! via xcodebuild
       run: |
         cd build
-        cmake --build . --config Release -- -sdk iphoneos
-        codesign -s "-" Source/ui_ios/Release-iphoneos/Play.app || true
+        xcodebuild \
+          -project Play!.xcodeproj \
+          -scheme Play \
+          -configuration Release \
+          -sdk iphoneos \
+          CODE_SIGNING_ALLOWED=NO \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGN_IDENTITY="" \
+          ENABLE_BITCODE=NO \
+          COMPILER_INDEX_STORE_ENABLE=NO \
+          -skipPackagePluginValidation \
+          -skipMacroValidation
 
-    - name: Create IPA for iOS 26
+    - name: Package IPA (Non-signed, Sideloadable)
       run: |
         mkdir -p Payload
-        cp -r build/Source/ui_ios/Release-iphoneos/Play.app Payload/
-        zip -r Play_iOS26.ipa Payload
+        cp -r build/Release-iphoneos/Play.app Payload/
+        zip -r Play_iOS26_Sideloadable.ipa Payload
 
-    - name: Upload Artifact
+    - name: Upload IPA Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Play_iOS26_iPhone12Pro
-        path: Play_iOS26.ipa
+        name: Play_iOS26_Sideloadable
+        path: Play_iOS26_Sideloadable.ipa
+
