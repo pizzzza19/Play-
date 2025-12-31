@@ -10,17 +10,17 @@ jobs:
     runs-on: macos-latest
 
     steps:
-    # 1️⃣ Setup Xcode (stable pour iOS 26 sur iPhone 12 Pro)
+    # 1️⃣ Setup Xcode
     - name: Set Xcode version
       uses: maxim-lobanov/setup-xcode@v1
       with:
         xcode-version: '16.0'
 
-    # 2️⃣ Installer dpkg (nécessaire pour certains scripts d’IPA)
+    # 2️⃣ Installer dpkg
     - name: Install dpkg
       run: brew install dpkg
 
-    # 3️⃣ Installer Vulkan SDK (fix 403 avec User-Agent)
+    # 3️⃣ Installer Vulkan SDK
     - name: Install Vulkan SDK
       run: |
         VULKAN_SDK_VERSION="1.4.304.1"
@@ -29,14 +29,14 @@ jobs:
         sudo ./InstallVulkan-$VULKAN_SDK_VERSION.app/Contents/MacOS/InstallVulkan-$VULKAN_SDK_VERSION in --al --c com.lunarg.vulkan.ios
         echo "VULKAN_SDK=${HOME}/VulkanSDK/${VULKAN_SDK_VERSION}/iOS" >> $GITHUB_ENV
 
-    # 4️⃣ Checkout du repo
+    # 4️⃣ Checkout du repo (avec tous les modules de ton fork)
     - name: Checkout Repository
       uses: actions/checkout@v4
       with:
         submodules: recursive
         fetch-depth: 1
 
-    # 5️⃣ Créer un tag fictif pour éviter "version string is empty"
+    # 5️⃣ Créer un tag fictif
     - name: Create Fake Tag
       run: git tag v1.0.0 || true
 
@@ -50,15 +50,18 @@ jobs:
           -DTARGET_IOS=ON \
           -DCMAKE_PREFIX_PATH=$VULKAN_SDK \
           -DBUILD_PSFPLAYER=ON \
-          -DBUILD_LIBRETRO_CORE=yes \
           -DUSE_VULKAN=ON
 
-  # 7️⃣ Compiler le projet (Optimisé pour signature externe)
+    # 7️⃣ Compiler le projet (CORRIGÉ pour ton fork)
     - name: Build
       run: |
         cd build
+        # On cherche spécifiquement Play.xcodeproj et on ignore AutoTest
+        REAL_PROJECT=$(find . -name "Play.xcodeproj" -not -path "*/AutoTest/*" | head -n 1)
+        echo "Projet utilisé : $REAL_PROJECT"
+
         xcodebuild \
-          -project "$(find . -name '*.xcodeproj' | head -n 1)" \
+          -project "$REAL_PROJECT" \
           -scheme Play \
           -configuration Release \
           -sdk iphoneos \
@@ -69,15 +72,16 @@ jobs:
           -skipPackagePluginValidation \
           -skipMacroValidation
 
-        # Localisation de l'app
-        APP_PATH=$(find ./Source -name "Play.app" -type d | head -n 1)
+        # Recherche du binaire .app dans le dossier de sortie
+        APP_PATH=$(find . -name "Play.app" -type d -path "*/Release-iphoneos/*" | head -n 1)
         if [ -d "$APP_PATH" ]; then
           echo "APP_FINAL_PATH=$APP_PATH" >> $GITHUB_ENV
         else
           echo "ERREUR : Play.app introuvable"
           exit 1
         fi
-    # 8️⃣ Générer l’IPA pour sideload
+
+    # 8️⃣ Générer l’IPA
     - name: Generate IPA
       run: |
         mkdir -p Payload
@@ -87,5 +91,8 @@ jobs:
     # 9️⃣ Upload IPA
     - name: Upload IPA
       uses: actions/upload-artifact@v4
+      with:
+        name: Play_iOS_Vulkan_IPA
+        path: Play_iOS_Vulkan.ipa
       with:
         name: Pl
