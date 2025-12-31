@@ -21,7 +21,7 @@ jobs:
     - name: Setup Xcode
       uses: maxim-lobanov/setup-xcode@v1
       with:
-        xcode-version: '26.1.1'
+        xcode-version: '26.1.1' # Version la plus récente disponible sur votre serveur
         
     - name: Install dependencies
       run: |
@@ -33,11 +33,15 @@ jobs:
         cd build
         cmake .. \
           -G Xcode \
-          -DCMAKE_SYSTEM_NAME=iOS \          -DCMAKE_OSX_ARCHITECTURES=arm64 \
+          -DCMAKE_SYSTEM_NAME=iOS \
+          -DCMAKE_OSX_ARCHITECTURES=arm64 \
           -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
           -DCMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM="" \
           -DCMAKE_BUILD_TYPE=Release \
-          -DBUILD_IOS=ON
+          -DBUILD_IOS=ON \
+          -DCMAKE_OSX_SYSROOT=iphoneos \
+          -DOPENGL_opengl_LIBRARY= \
+          -DOPENGL_gl_LIBRARY= 
         
     - name: Build for iOS
       run: |
