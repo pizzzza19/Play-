@@ -74,4 +74,3 @@ jobs:
       with:
         name: Play_iOS26_iPhone
         path: Play_iOS26.ipa
-
