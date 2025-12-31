@@ -9,7 +9,7 @@ jobs:
   build_ios:
     runs-on: macos-latest
     steps:
-      # 1️⃣ Configuration Xcode (Mise à jour vers la version détectée sur ton serveur)
+      # 1️⃣ Configuration Xcode (Version 26.1.1 pour iOS 18/19)
       - name: Set Xcode version
         uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -69,23 +69,25 @@ jobs:
           APP_PATH=$(find $(pwd) -name "Play.app" -type d | grep "Release-iphoneos" | head -n 1)
           echo "APP_FINAL_PATH=$APP_PATH" >> $GITHUB_ENV
 
-      # 6️⃣ Signature Robuste (Méthode MeloNX utilisant TES fichiers Resources)
+      # 6️⃣ Signature Robuste (Correction Dynamique)
       - name: Patch App and Sign (MeloNX JIT-Ready)
         run: |
           APP_DIR="${{ env.APP_FINAL_PATH }}"
           
-          # Chemins vers tes fichiers créés
-          ENTITLEMENTS="Source/ui_ios/Resources/Play.entitlements"
-          INFO_PLIST_SRC="Source/ui_ios/Resources/Info.plist"
+          # On cherche tes fichiers là où ils sont sur ton repo
+          INFO_PLIST_SRC=$(find . -path "*/ui_ios/Resources/Info.plist" | head -n 1)
+          ENTITLEMENTS_SRC=$(find . -name "Play.entitlements" | head -n 1)
           
-          # 1. On s'assure que l'Info.plist final contient bien tes permissions
+          echo "Utilisation de l'Info.plist : $INFO_PLIST_SRC"
+          echo "Utilisation des Entitlements : $ENTITLEMENTS_SRC"
+
+          # Injection de l'Info.plist
           cp "$INFO_PLIST_SRC" "$APP_DIR/Info.plist"
           
-          # 2. Injection forcée des Entitlements de débogage (vAttach support)
-          # On utilise --force pour écraser toute signature existante
-          codesign --force --sign - --entitlements "$ENTITLEMENTS" "$APP_DIR"
+          # Signature forcée avec tes droits de débogage
+          codesign --force --sign - --entitlements "$ENTITLEMENTS_SRC" "$APP_DIR"
           
-          echo "Binaire Play! signé avec succès avec les droits MeloNX."
+          echo "Signature terminée avec succès."
 
       # 7️⃣ Création de l'IPA
       - name: Create IPA
