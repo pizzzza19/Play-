@@ -1,82 +1,83 @@
-name: Build Play! iOS JIT (Xcode 26 + Vulkan 1.4)
+name: Build Play iOS JIT
 
 on:
   push:
     branches: [ master, main ]
-  pull_request:    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
   workflow_dispatch:
 
 jobs:
   build_ios:
     name: Build iOS (Xcode 26.1.1)
     runs-on: macos-15
-        
+    
     steps:
-    - name: Set Xcode version
-      uses: maxim-lobanov/setup-xcode@v1
-      with:
-        xcode-version: '26.1.1'
-            
-    - name: Install dependencies
-      run: |
-        brew install dpkg cmake ninja
-            
-    - name: Install Vulkan SDK 1.4.309.0 (iOS)
-      run: |
-        cd $RUNNER_WORKSPACE
-        curl -L --show-error --output vulkansdk.zip https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/mac/vulkansdk-macos-${VULKAN_SDK_VERSION}.zip?Human=true
-        unzip vulkansdk.zip
-        sudo ./InstallVulkan-${VULKAN_SDK_VERSION}.app/Contents/MacOS/InstallVulkan-${VULKAN_SDK_VERSION} in --al --c com.lunarg.vulkan.ios
-        echo "VULKAN_SDK=${HOME}/VulkanSDK/${VULKAN_SDK_VERSION}/iOS" >> $GITHUB_ENV
-      env:
-        VULKAN_SDK_VERSION: '1.4.309.0'
+      - name: Set Xcode version
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.1.1'
+          
+      - name: Install dependencies
+        run: |
+          brew install dpkg cmake ninja
+          
+      - name: Install Vulkan SDK 1.4.309.0 (iOS)
+        run: |
+          cd $RUNNER_WORKSPACE
+          curl -L --show-error --output vulkansdk.zip https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/mac/vulkansdk-macos-${VULKAN_SDK_VERSION}.zip?Human=true
+          unzip vulkansdk.zip
+          sudo ./InstallVulkan-${VULKAN_SDK_VERSION}.app/Contents/MacOS/InstallVulkan-${VULKAN_SDK_VERSION} in --al --c com.lunarg.vulkan.ios
+          echo "VULKAN_SDK=${HOME}/VulkanSDK/${VULKAN_SDK_VERSION}/iOS" >> $GITHUB_ENV
+        env:
+          VULKAN_SDK_VERSION: '1.4.309.0'
 
-    - name: Checkout
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-        fetch-depth: 0
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
-    - name: Force Fetch Git Tags
-      run: git fetch --tags --force
+      - name: Force Fetch Git Tags
+        run: git fetch --tags --force
 
-    - name: Generate CMake Project
-      run: |
-        mkdir build
-        cd build
-        cmake .. \
-          -G "Xcode" \
-          -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake \
-          -DTARGET_IOS=ON \
-          -DCMAKE_PREFIX_PATH=$VULKAN_SDK \
-          -DBUILD_PSFPLAYER=ON \
-          -DBUILD_LIBRETRO_CORE=yes \
-          -DENABLE_JIT=ON
+      - name: Generate CMake Project
+        run: |
+          mkdir build
+          cd build
+          cmake .. \
+            -G "Xcode" \
+            -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake \
+            -DTARGET_IOS=ON \
+            -DCMAKE_PREFIX_PATH=$VULKAN_SDK \
+            -DBUILD_PSFPLAYER=ON \
+            -DBUILD_LIBRETRO_CORE=yes \
+            -DENABLE_JIT=ON
 
-    - name: Build and Sign with JIT Entitlements
-      run: |
-        cd build
-        cmake --build . --config Release
-        
-        # Application de la signature ad-hoc avec tes entitlements JIT
-        if [ -f "../Source/ui_ios/Play.entitlements" ]; then
-           echo "🚀 Application des droits JIT (Entitlements)..."
-           codesign -f -s "-" --entitlements "../Source/ui_ios/Play.entitlements" Source/ui_ios/Release-iphoneos/Play.app
-        else
-           echo "⚠️ Fichier Play.entitlements non trouvé. Signature simple."
-           codesign -s "-" Source/ui_ios/Release-iphoneos/Play.app
-        fi
+      - name: Build and Sign with JIT Entitlements
+        run: |
+          cd build
+          cmake --build . --config Release
+          
+          if [ -f "../Source/ui_ios/Play.entitlements" ]; then
+             echo "Applying JIT Entitlements..."
+             codesign -f -s "-" --entitlements "../Source/ui_ios/Play.entitlements" Source/ui_ios/Release-iphoneos/Play.app
+          else
+             echo "Warning: Entitlements not found, standard signing."
+             codesign -s "-" Source/ui_ios/Release-iphoneos/Play.app
+          fi
 
-    - name: Package IPA
-      run: |
-        cd build
-        mkdir -p Payload
-        cp -r Source/ui_ios/Release-iphoneos/Play.app Payload/
-        zip -r Play_JIT_iOS26.ipa Payload
+      - name: Package IPA
+        run: |
+          cd build
+          mkdir -p Payload
+          cp -r Source/ui_ios/Release-iphoneos/Play.app Payload/
+          zip -r Play_JIT_iOS26.ipa Payload
 
-    - name: Upload Build Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: Play_iOS_JIT_Latest
-        path: build/Play_JIT_iOS26.ipa
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Play_iOS_JIT_Latest
+          path: build/Play_JIT_iOS26.ipa
+          retention-days: 7
         retention-days: 7
