@@ -2,6 +2,7 @@
 #import "EmulatorViewController.h"
 #include "../gs/GSH_OpenGL/GSH_OpenGL.h"
 #include "DebuggerSimulator.h"
+#include "JIT/JitMemory.h"
 
 @interface AppDelegate ()
 
@@ -13,6 +14,7 @@
 {
 	[EmulatorViewController registerPreferences];
 	CGSH_OpenGL::RegisterPreferences();
+	JitMemory::Initialize();
 	return YES;
 }
 
@@ -33,6 +35,11 @@
 }
 
 - (void)applicationWillTerminate:(UIApplication*)application
+{
+	StopSimulateDebugger();
+}
+
+@end
 {
 	StopSimulateDebugger();
 }
