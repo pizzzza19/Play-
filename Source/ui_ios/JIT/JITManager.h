@@ -35,3 +35,4 @@ typedef NS_ENUM(NSInteger, JITStatus) {
 @end
 
 NS_ASSUME_NONNULL_END
+Message : Add JITManager.h for JIT coordination
