@@ -1,6 +1,6 @@
 //
 //  JITManager.mm
-//  Play! - JIT Manager
+//  Play! - JIT Manager Implementation
 //
 
 #import "JITManager.h"
@@ -32,7 +32,6 @@
         _status = JITStatusDisabled;
         _jitSemaphore = dispatch_semaphore_create(0);
         
-        // Observer pour l'activation JIT
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(handleJITActivation:)
                                                      name:@"JITActivatedNotification"
@@ -48,11 +47,9 @@
 - (BOOL)initializeJIT {
     NSLog(@"[JITManager] Initializing JIT system...");
     
-    // Vérifier si JIT est disponible
     if (![self.dualMapping isJITAvailable]) {
         NSLog(@"[JITManager] JIT is not available on this device/iOS version");
         
-        // Afficher une alerte si on est sur le thread principal
         if ([NSThread isMainThread]) {
             [self showJITWarning];
         } else {
@@ -117,7 +114,6 @@
         return NULL;
     }
     
-    // Écrire le code dans la région RW
     BOOL success = [self.dualMapping writeCode:code 
                                         length:length 
                                       toRegion:region 
@@ -128,18 +124,16 @@
         return NULL;
     }
     
-    // Retourner le pointeur exécutable (RX)
     return [self.dualMapping getExecutablePointer:region offset:0];
 }
 
 - (void)waitForJITActivation {
     if (self.isJITEnabled) {
-        return; // Déjà activé
+        return;
     }
     
     NSLog(@"[JITManager] Waiting for JIT activation...");
     
-    // Attendre max 60 secondes
     dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC);
     long result = dispatch_semaphore_wait(self.jitSemaphore, timeout);
     
@@ -161,9 +155,7 @@
 - (void)showJITWarning {
     UIAlertController *alert = [UIAlertController 
         alertControllerWithTitle:@"JIT Required"
-        message:@"Play! requires JIT compilation for optimal performance.\n\n"
-                @"Please use StikDebug or AltStore to enable JIT.\n\n"
-                @"The app will wait for JIT activation..."
+        message:@"Play! requires JIT compilation for PS2 emulation.\n\nPlease use StikDebug to enable JIT.\n\nThe app will wait for JIT activation..."
         preferredStyle:UIAlertControllerStyleAlert];
     
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" 
