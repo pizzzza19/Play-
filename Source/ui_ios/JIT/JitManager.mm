@@ -2,7 +2,6 @@
 #include <mach/mach.h>
 #include <sys/mman.h>
 #include <libkern/OSCacheControl.h>
-#include <assert.h>
 
 JitManager& JitManager::Get() {
     static JitManager instance;
@@ -10,41 +9,18 @@ JitManager& JitManager::Get() {
 }
 
 bool JitManager::Initialize(size_t size) {
-    // Alignement strict 16KB pour Apple Silicon
     m_size = (size + 0x3FFF) & ~0x3FFF;
-
-    // 1. Allocation RX (Exécution)
-    m_rx = mmap(nullptr, m_size, PROT_READ | PROT_EXEC, 
-                MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT, -1, 0);
-
+    m_rx = mmap(nullptr, m_size, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT, -1, 0);
     if (m_rx == MAP_FAILED) return false;
-
-    // 2. Remap vers vue RW (Écriture)
     vm_address_t rwAddr = 0;
-    vm_prot_t curProt, maxProt;
-
-    kern_return_t kr = vm_remap(
-        mach_task_self(),
-        &rwAddr,
-        m_size,
-        0,
-        VM_FLAGS_ANYWHERE,
-        mach_task_self(),
-        (vm_address_t)m_rx,
-        FALSE,
-        &curProt,
-        &maxProt,
-        VM_INHERIT_NONE
-    );
-
+    vm_prot_t cur, max;
+    kern_return_t kr = vm_remap(mach_task_self(), &rwAddr, m_size, 0, VM_FLAGS_ANYWHERE, mach_task_self(), (vm_address_t)m_rx, FALSE, &cur, &max, VM_INHERIT_NONE);
     if (kr != KERN_SUCCESS) {
         munmap(m_rx, m_size);
         return false;
     }
-
     m_rw = (void*)rwAddr;
     mprotect(m_rw, m_size, PROT_READ | PROT_WRITE);
-
     return true;
 }
 
