@@ -1,21 +1,18 @@
-name: Build iOS Vulkan JIT-Ready
+name: Build Play! iOS (JIT Enabled)
 
 on:
   push:
-  pull_request:
   workflow_dispatch:
 
 jobs:
   build_ios:
     runs-on: macos-latest
     steps:
-      # 1️⃣ Configuration Xcode (Version 26.1.1 pour iOS 18/19)
       - name: Set Xcode version
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '26.1.1'
 
-      # 2️⃣ Installation SDK Vulkan
       - name: Install Vulkan SDK
         run: |
           VULKAN_SDK_VERSION="1.4.304.1"
@@ -24,18 +21,12 @@ jobs:
           sudo ./InstallVulkan-$VULKAN_SDK_VERSION.app/Contents/MacOS/InstallVulkan-$VULKAN_SDK_VERSION in --al --c com.lunarg.vulkan.ios
           echo "VULKAN_SDK=${HOME}/VulkanSDK/${VULKAN_SDK_VERSION}/iOS" >> $GITHUB_ENV
 
-      # 3️⃣ Checkout du code
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 1
 
-      - name: Create Fake Tag
-        run: git tag v1.0.0 || true
-
-      # 4️⃣ Génération CMake
-      - name: Generate CMake Project
+      - name: Generate CMake (Cible iOS)
         run: |
           mkdir build
           cd build
@@ -44,61 +35,64 @@ jobs:
             -DTARGET_IOS=ON \
             -DCMAKE_PREFIX_PATH=$VULKAN_SDK \
             -DUSE_VULKAN=ON \
-            -DBUILD_PSFPLAYER=OFF \
-            -DBUILD_LIBRETRO_CORE=OFF
+            -DBUILD_PSFPLAYER=OFF
 
-      # 5️⃣ Compilation
-      - name: Build
+      - name: Build Play! for iPhone
         run: |
           cd build
-          PROJECT_PATH=$(find . -name "Play.xcodeproj" -not -path "*/AutoTest/*" | head -n 1)
-          
+          PROJECT_PATH=$(find . -name "Play.xcodeproj" | head -n 1)
           xcodebuild build \
             -project "$PROJECT_PATH" \
             -scheme Play \
             -configuration Release \
             -sdk iphoneos \
-            -destination "generic/platform=iOS" \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES \
-            -skipPackagePluginValidation \
-            -skipMacroValidation
+            CODE_SIGNING_REQUIRED=NO
 
           APP_PATH=$(find $(pwd) -name "Play.app" -type d | grep "Release-iphoneos" | head -n 1)
           echo "APP_FINAL_PATH=$APP_PATH" >> $GITHUB_ENV
 
-      # 6️⃣ Signature Robuste (Correction Dynamique)
-      - name: Patch App and Sign (MeloNX JIT-Ready)
+      - name: Fix Bundle ID & Sign (Triple Vérification)
         run: |
           APP_DIR="${{ env.APP_FINAL_PATH }}"
+          PLIST="$APP_DIR/Info.plist"
           
-          # On cherche tes fichiers là où ils sont sur ton repo
-          INFO_PLIST_SRC=$(find . -path "*/ui_ios/Resources/Info.plist" | head -n 1)
-          ENTITLEMENTS_SRC=$(find . -name "Play.entitlements" | head -n 1)
+          # 1. Correction du Bundle ID (Supprime la variable ${MACOSX...} qui fait planter Sideloadly)
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.dmamss.play" "$PLIST"
           
-          echo "Utilisation de l'Info.plist : $INFO_PLIST_SRC"
-          echo "Utilisation des Entitlements : $ENTITLEMENTS_SRC"
+          # 2. Permissions de fichiers et manettes (Essentiel pour jouer)
+          /usr/libexec/PlistBuddy -c "Delete :UIFileSharingEnabled" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool true" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :LSSupportsOpeningDocumentsInPlace" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$PLIST"
 
-          # Injection de l'Info.plist
-          cp "$INFO_PLIST_SRC" "$APP_DIR/Info.plist"
+          # 3. Création du fichier Entitlements propre
+          cat <<EOF > jit.entitlements
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>get-task-allow</key>
+              <true/>
+              <key>com.apple.developer.kernel.increased-memory-limit</key>
+              <true/>
+              <key>com.apple.developer.kernel.extended-virtual-addressing</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
           
-          # Signature forcée avec tes droits de débogage
-          codesign --force --sign - --entitlements "$ENTITLEMENTS_SRC" "$APP_DIR"
-          
-          echo "Signature terminée avec succès."
+          # 4. Signature finale pour iPhone
+          codesign --force --sign - --entitlements jit.entitlements "$APP_DIR"
 
-      # 7️⃣ Création de l'IPA
-      - name: Create IPA
+      - name: Export IPA
         run: |
-          mkdir -p Payload
+          mkdir Payload
           cp -r "${{ env.APP_FINAL_PATH }}" Payload/
-          zip -r Play-JIT-Vulkan.ipa Payload
-          
-      # 8️⃣ Upload de l'artefact
-      - name: Upload IPA
+          zip -r Play_Final_Fix.ipa Payload
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Play-JIT-Vulkan
-          path: Play-JIT-Vulkan.ipa
+          name: Play-iOS-Final
+          path: Play_Final_Fix.ipa
