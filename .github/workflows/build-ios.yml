@@ -3,25 +3,24 @@ name: Build Play! iOS JIT (Xcode 26 + Vulkan 1.4)
 on:
   push:
     branches: [ master, main ]
-  pull_request:
-    branches: [ master, main ]
+  pull_request:    branches: [ master, main ]
   workflow_dispatch:
 
 jobs:
   build_ios:
     name: Build iOS (Xcode 26.1.1)
     runs-on: macos-15
-    
+        
     steps:
     - name: Set Xcode version
       uses: maxim-lobanov/setup-xcode@v1
       with:
         xcode-version: '26.1.1'
-        
+            
     - name: Install dependencies
       run: |
         brew install dpkg cmake ninja
-        
+            
     - name: Install Vulkan SDK 1.4.309.0 (iOS)
       run: |
         cd $RUNNER_WORKSPACE
@@ -81,4 +80,3 @@ jobs:
         name: Play_iOS_JIT_Latest
         path: build/Play_JIT_iOS26.ipa
         retention-days: 7
-        retention-days: 30
