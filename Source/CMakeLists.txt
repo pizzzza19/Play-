@@ -1,6 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
 
-# macOS deployment target needs to be set before 'project' to work
 if(APPLE AND NOT TARGET_IOS)
 	set(CMAKE_OSX_DEPLOYMENT_TARGET "16" CACHE STRING "Minimum OS X deployment version")
 endif()
@@ -14,6 +13,10 @@ set(CMAKE_MODULE_PATH
 	${CMAKE_MODULE_PATH}
 )
 include(Header)
+
+if(APPLE AND TARGET_PLATFORM_IOS)
+    add_definitions(-DPLAY_IOS_JIT=1 -DENABLE_JIT=1)
+endif()
 
 set(BUILD_PLAY ON CACHE BOOL "Build Play! Emulator")
 set(BUILD_PSFPLAYER OFF CACHE BOOL "Build PsfPlayer")
