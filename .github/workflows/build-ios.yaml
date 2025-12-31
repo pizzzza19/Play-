@@ -1,45 +1,57 @@
-name: Build iOS 26 (Sideloadable)
+name: Build iOS 26
 
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
 
 jobs:
   build_ios:
     runs-on: macos-latest
+
     steps:
     - name: Set Xcode version
       uses: maxim-lobanov/setup-xcode@v1
       with:
-        xcode-version: '16.2'
+        xcode-version: '16.2' # Recommandé pour iOS 26.x
 
-    - name: Checkout Code
+    - name: Checkout repository
       uses: actions/checkout@v4
       with:
         submodules: recursive
         fetch-depth: 0
 
-    - name: Install Vulkan SDK (Optional)
+    - name: Install CMake
       run: |
-        VULKAN_VER="1.4.304.1"
-        curl -L -A "Mozilla/5.0" "https://sdk.lunarg.com/sdk/download/$VULKAN_VER/mac/vulkansdk-macos-$VULKAN_VER.zip" -o vulkansdk.zip
-        unzip -q vulkansdk.zip
-        echo "VULKAN_SDK=${HOME}/VulkanSDK/$VULKAN_VER/iOS" >> $GITHUB_ENV
+        brew install cmake
 
-    - name: Generate Xcode Project with CMake
+    # Optional: Vulkan SDK si tu veux l'utiliser
+    #- name: Install Vulkan SDK
+    #  run: |
+    #    VULKAN_VER="1.4.304.1"
+    #    curl -L -o vulkansdk.zip "https://sdk.lunarg.com/sdk/download/$VULKAN_VER/mac/vulkansdk-macos-$VULKAN_VER.zip"
+    #    unzip -q vulkansdk.zip
+    #    echo "VULKAN_SDK=${HOME}/VulkanSDK/$VULKAN_VER/iOS" >> $GITHUB_ENV
+
+    - name: Generate Xcode Project
       run: |
         rm -rf build
         mkdir build
         cd build
         cmake .. -G Xcode \
-                 -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake \
-                 -DTARGET_IOS=ON \
-                 -DCMAKE_OSX_ARCHITECTURES=arm64 \
-                 -DUSE_VULKAN=ON
+          -DPROJECT_NAME=Play \
+          -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake \
+          -DTARGET_IOS=ON \
+          -DCMAKE_OSX_ARCHITECTURES=arm64 \
+          -DUSE_VULKAN=OFF \
+          -DVERSION="26.0.0"
+        ls -la
 
-    - name: Build Play! via xcodebuild
+    - name: Build Xcode Project (non signé)
       run: |
         cd build
         xcodebuild \
-          -project Play!.xcodeproj \
+          -project Play.xcodeproj \
           -scheme Play \
           -configuration Release \
           -sdk iphoneos \
@@ -51,15 +63,15 @@ jobs:
           -skipPackagePluginValidation \
           -skipMacroValidation
 
-    - name: Package IPA (Non-signed, Sideloadable)
+    - name: Create IPA for Sideloadly
       run: |
         mkdir -p Payload
         cp -r build/Release-iphoneos/Play.app Payload/
-        zip -r Play_iOS26_Sideloadable.ipa Payload
+        zip -r Play_iOS26.ipa Payload
 
-    - name: Upload IPA Artifact
+    - name: Upload IPA artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Play_iOS26_Sideloadable
-        path: Play_iOS26_Sideloadable.ipa
+        name: Play_iOS26_iPhone
+        path: Play_iOS26.ipa
 
