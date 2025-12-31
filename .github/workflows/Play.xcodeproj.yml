@@ -1,8 +1,59 @@
-# 7️⃣ Compiler le projet (Cible Sideloadly / Xcode 26.1.1)
+name: Build iOS Vulkan
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build_ios:
+    runs-on: macos-latest
+
+    steps:
+    # 1️⃣ Configuration de la version Xcode demandée
+    - name: Set Xcode version
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: '26.1.1'
+
+    # 2️⃣ Installation du SDK Vulkan (Indispensable pour ton iPhone 12 Pro)
+    - name: Install Vulkan SDK
+      run: |
+        VULKAN_SDK_VERSION="1.4.304.1"
+        curl -L -A "Mozilla/5.0" --show-error --output vulkansdk.zip "https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/mac/vulkansdk-macos-$VULKAN_SDK_VERSION.zip"
+        unzip -q vulkansdk.zip
+        sudo ./InstallVulkan-$VULKAN_SDK_VERSION.app/Contents/MacOS/InstallVulkan-$VULKAN_SDK_VERSION in --al --c com.lunarg.vulkan.ios
+        echo "VULKAN_SDK=${HOME}/VulkanSDK/${VULKAN_SDK_VERSION}/iOS" >> $GITHUB_ENV
+
+    # 3️⃣ Récupération du code source et des sous-modules
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 1
+
+    # 4️⃣ Tag fictif pour éviter les erreurs de version vide
+    - name: Create Fake Tag
+      run: git tag v1.0.0 || true
+
+    # 5️⃣ Génération du projet Xcode via CMake
+    - name: Generate CMake Project
+      run: |
+        mkdir build
+        cd build
+        cmake .. -G"Xcode" \
+          -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake \
+          -DTARGET_IOS=ON \
+          -DCMAKE_PREFIX_PATH=$VULKAN_SDK \
+          -DUSE_VULKAN=ON \
+          -DBUILD_PSFPLAYER=OFF \
+          -DBUILD_LIBRETRO_CORE=OFF
+
+    # 6️⃣ Compilation (Correction Error 70 + Xcode 26.1.1)
     - name: Build
       run: |
         cd build
-        # Localisation du projet principal
+        # Recherche dynamique du projet pour éviter le conflit AutoTest
         PROJECT_PATH=$(find . -name "Play.xcodeproj" -not -path "*/AutoTest/*" | head -n 1)
         
         xcodebuild build \
@@ -19,27 +70,25 @@
           -skipPackagePluginValidation \
           -skipMacroValidation
 
-        # Recherche du binaire .app
+        # Exportation du chemin de l'application
         APP_PATH=$(find $(pwd) -name "Play.app" -type d | grep "Release-iphoneos" | head -n 1)
         if [ -d "$APP_PATH" ]; then
           echo "APP_FINAL_PATH=$APP_PATH" >> $GITHUB_ENV
         else
-          echo "ERREUR : Play.app introuvable"
+          echo "ERREUR : Play.app introuvable après compilation."
           exit 1
         fi
 
-    # 8️⃣ Générer l’IPA (Structure correcte pour Sideloadly)
+    # 7️⃣ Création de l'IPA pour Sideloadly (Structure Payload)
     - name: Generate IPA
       run: |
         mkdir -p Payload
-        # On copie l'application dans le dossier Payload (obligatoire pour l'IPA)
         cp -r "${{ env.APP_FINAL_PATH }}" Payload/
-        # Création de l'archive IPA
         zip -r Play_Vulkan_Sideload.ipa Payload
 
-    # 9️⃣ Exportation de l'artéfact
+    # 8️⃣ Mise à disposition du fichier
     - name: Upload IPA
       uses: actions/upload-artifact@v4
       with:
-        name: Play_Sideload_Version
+        name: Play_Sideload_IPA
         path: Play_Vulkan_Sideload.ipa
