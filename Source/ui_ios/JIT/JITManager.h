@@ -1,6 +1,6 @@
 //
 //  JITManager.h
-//  Play! - JIT Manager
+//  Play! - JIT Manager for iOS 26
 //
 
 #import <Foundation/Foundation.h>
@@ -20,27 +20,15 @@ typedef NS_ENUM(NSInteger, JITStatus) {
 @property (nonatomic, readonly) JITStatus status;
 @property (nonatomic, readonly) BOOL isJITEnabled;
 
-// Singleton
 + (instancetype)sharedManager;
 
-// Initialiser le JIT
 - (BOOL)initializeJIT;
-
-// Vérifier le statut
 - (void)checkJITStatus;
-
-// Allouer une région JIT
 - (DualMappedRegion*)allocateJITRegionWithSize:(size_t)size;
-
-// Libérer une région
 - (void)freeJITRegion:(DualMappedRegion*)region;
-
-// Compiler et écrire du code
 - (void*)compileAndWrite:(const void*)code 
                   length:(size_t)length 
                 toRegion:(DualMappedRegion*)region;
-
-// Pour l'intégration avec StikDebug
 - (void)waitForJITActivation;
 - (void)notifyJITActivated;
 
