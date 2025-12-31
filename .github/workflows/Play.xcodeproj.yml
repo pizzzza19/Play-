@@ -9,73 +9,95 @@ jobs:
   build_ios:
     runs-on: macos-latest
     steps:
-    # 1️⃣ Configuration Xcode
-    - name: Set Xcode version
-      uses: maxim-lobanov/setup-xcode@v1
-      with:
-        xcode-version: '26.1.1'
+      # 1️⃣ Configuration Xcode
+      - name: Set Xcode version
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '15.4' # Version stable pour iOS 17/18 (Xcode 26 n'existe pas encore)
 
-    # 2️⃣ Installation SDK Vulkan
-    - name: Install Vulkan SDK
-      run: |
-        VULKAN_SDK_VERSION="1.4.304.1"
-        curl -L -A "Mozilla/5.0" --show-error --output vulkansdk.zip "https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/mac/vulkansdk-macos-$VULKAN_SDK_VERSION.zip"
-        unzip -q vulkansdk.zip
-        sudo ./InstallVulkan-$VULKAN_SDK_VERSION.app/Contents/MacOS/InstallVulkan-$VULKAN_SDK_VERSION in --al --c com.lunarg.vulkan.ios
-        echo "VULKAN_SDK=${HOME}/VulkanSDK/${VULKAN_SDK_VERSION}/iOS" >> $GITHUB_ENV
+      # 2️⃣ Installation SDK Vulkan
+      - name: Install Vulkan SDK
+        run: |
+          VULKAN_SDK_VERSION="1.4.304.1"
+          curl -L -A "Mozilla/5.0" --show-error --output vulkansdk.zip "https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/mac/vulkansdk-macos-$VULKAN_SDK_VERSION.zip"
+          unzip -q vulkansdk.zip
+          sudo ./InstallVulkan-$VULKAN_SDK_VERSION.app/Contents/MacOS/InstallVulkan-$VULKAN_SDK_VERSION in --al --c com.lunarg.vulkan.ios
+          echo "VULKAN_SDK=${HOME}/VulkanSDK/${VULKAN_SDK_VERSION}/iOS" >> $GITHUB_ENV
 
-    # 3️⃣ Checkout du code
-    - name: Checkout Repository
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-        fetch-depth: 1
+      # 3️⃣ Checkout du code
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
 
-    - name: Create Fake Tag
-      run: git tag v1.0.0 || true
+      - name: Create Fake Tag
+        run: git tag v1.0.0 || true
 
-    # 4️⃣ Génération CMake
-    - name: Generate CMake Project
-      run: |
-        mkdir build
-        cd build
-        cmake .. -G"Xcode" \
-          -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake \
-          -DTARGET_IOS=ON \
-          -DCMAKE_PREFIX_PATH=$VULKAN_SDK \
-          -DUSE_VULKAN=ON \
-          -DBUILD_PSFPLAYER=OFF \
-          -DBUILD_LIBRETRO_CORE=OFF
+      # 4️⃣ Génération CMake
+      - name: Generate CMake Project
+        run: |
+          mkdir build
+          cd build
+          cmake .. -G"Xcode" \
+            -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake \
+            -DTARGET_IOS=ON \
+            -DCMAKE_PREFIX_PATH=$VULKAN_SDK \
+            -DUSE_VULKAN=ON \
+            -DBUILD_PSFPLAYER=OFF \
+            -DBUILD_LIBRETRO_CORE=OFF
 
-    # 5️⃣ Compilation
-    - name: Build
-      run: |
-        cd build
-        PROJECT_PATH=$(find . -name "Play.xcodeproj" -not -path "*/AutoTest/*" | head -n 1)
-        
-        xcodebuild build \
-          -project "$PROJECT_PATH" \
-          -scheme Play \
-          -configuration Release \
-          -sdk iphoneos \
-          -destination "generic/platform=iOS" \
-          CODE_SIGNING_ALLOWED=NO \
-          CODE_SIGNING_REQUIRED=NO \
-          CODE_SIGN_IDENTITY="" \
-          AD_HOC_CODE_SIGNING_ALLOWED=YES \
-          -skipPackagePluginValidation \
-          -skipMacroValidation
+      # 5️⃣ Compilation
+      - name: Build
+        run: |
+          cd build
+          PROJECT_PATH=$(find . -name "Play.xcodeproj" -not -path "*/AutoTest/*" | head -n 1)
+          
+          xcodebuild build \
+            -project "$PROJECT_PATH" \
+            -scheme Play \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            -skipPackagePluginValidation \
+            -skipMacroValidation
 
-        # Détection dynamique du chemin de l'application compilée
-        APP_PATH=$(find $(pwd) -name "Play.app" -type d | grep "Release-iphoneos" | head -n 1)
-        echo "APP_FINAL_PATH=$APP_PATH" >> $GITHUB_ENV
+          APP_PATH=$(find $(pwd) -name "Play.app" -type d | grep "Release-iphoneos" | head -n 1)
+          echo "APP_FINAL_PATH=$APP_PATH" >> $GITHUB_ENV
 
-    # 6️⃣ Modification de l'Info.plist et Injection JIT (MeloNX Style)
-    - name: Patch App and Inject Entitlements
-      run: |
-        # Accès direct à l'Info.plist dans le binaire
-        INFO_PLIST="${{ env.APP_FINAL_PATH }}/Info.plist"
-        
-        # Activation du partage de fichiers iTunes/Fichiers
-        plutil -replace UIFileSharingEnabled -bool YES "$INFO_PLIST"
-        plutil -replace LSSupports
+      # 6️⃣ Signature Robuste (Méthode MeloNX utilisant TES fichiers)
+      - name: Patch App and Sign (MeloNX JIT-Ready)
+        run: |
+          APP_DIR="${{ env.APP_FINAL_PATH }}"
+          
+          # Utilisation de TON fichier Entitlements robuste
+          ENTITLEMENTS="Source/ui_ios/Resources/Play.entitlements"
+          
+          # Utilisation de TON Info.plist propre
+          INFO_PLIST="Source/ui_ios/Resources/Info.plist"
+          
+          # On injecte ton Info.plist dans le binaire compilé
+          cp "$INFO_PLIST" "$APP_DIR/Info.plist"
+          
+          # Signature forcée avec les droits de débogage pour StikDebug
+          codesign --force --sign - --entitlements "$ENTITLEMENTS" "$APP_DIR"
+          
+          echo "Binaire Play! signé avec succès pour le JIT."
+
+      # 7️⃣ Création de l'IPA
+      - name: Create IPA
+        run: |
+          mkdir Payload
+          cp -r "${{ env.APP_FINAL_PATH }}" Payload/
+          zip -r Play-JIT-Vulkan.ipa Payload
+          
+      # 8️⃣ Upload de l'artefact
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Play-JIT-Vulkan
+          path: Play-JIT-Vulkan.ipa
