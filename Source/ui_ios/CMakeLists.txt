@@ -109,6 +109,8 @@ set(OSX_SOURCES
 	VirtualPadItem.mm
 	VirtualPadStick.mm
 	VirtualPadView.mm
+	JIT/DualMapping.mm
+	JIT/JITManager.mm
 )
 
 set(OSX_HEADERS
@@ -128,6 +130,8 @@ set(OSX_HEADERS
 	VirtualPadItem.h
 	VirtualPadStick.h
 	VirtualPadView.h
+	JIT/DualMapping.h
+	JIT/JITManager.h
 )
 
 set(OSX_RES
@@ -185,7 +189,13 @@ set_target_properties(
 		MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
 		XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
 		RESOURCE "${OSX_RES}"
+		XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS "${CMAKE_CURRENT_SOURCE_DIR}/Play.entitlements"
+		XCODE_ATTRIBUTE_CODE_SIGN_INJECT_BASE_ENTITLEMENTS "NO"
+		XCODE_ATTRIBUTE_ENABLE_BITCODE "NO"
+		XCODE_ATTRIBUTE_OTHER_CODE_SIGN_FLAGS "--generate-entitlement-der"
 )
+
+target_include_directories(Play PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/JIT)
 
 if(USE_GSH_VULKAN)
 	set_target_properties(
