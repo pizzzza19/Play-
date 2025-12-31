@@ -1,51 +1,59 @@
-name: Build iOS IPA for sideloading
+name: Build iOS Vulkan
 
-on:
-  workflow_dispatch:
+on: [push, pull_request, workflow_dispatch]
 
 jobs:
   build_ios:
     runs-on: macos-latest
 
     steps:
-    - name: Checkout repository
+    - name: Set Xcode version
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: '16.0' # Modifié : 16.4 n'existe pas sur les serveurs GitHub
+
+    - name: Install dpkg
+      run: |
+        brew install dpkg
+
+    - name: Install Vulkan SDK
+      run: |
+        VULKAN_SDK_VERSION="1.4.304.1"
+        # Modifié : Ajout de -A (User-Agent) pour éviter l'erreur 403 Forbidden
+        curl -L -A "Mozilla/5.0" --show-error --output vulkansdk.zip "https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/mac/vulkansdk-macos-$VULKAN_SDK_VERSION.zip"
+        unzip -q vulkansdk.zip
+        sudo ./InstallVulkan-$VULKAN_SDK_VERSION.app/Contents/MacOS/InstallVulkan-$VULKAN_SDK_VERSION in --al --c com.lunarg.vulkan.ios
+        echo "VULKAN_SDK=${HOME}/VulkanSDK/${VULKAN_SDK_VERSION}/iOS" >> $GITHUB_ENV
+
+    - name: Checkout
       uses: actions/checkout@v4
       with:
         submodules: recursive
+        fetch-depth: 0
 
-    - name: Install CMake
-      run: |
-        brew install cmake
+    - name: Create Fake Tag # Ajouté : Évite l'erreur "version string is empty"
+      run: git tag v1.0.0 || true
 
     - name: Generate CMake Project
       run: |
-        rm -rf build
         mkdir build
         cd build
-        cmake .. \
-          -G "Xcode" \
-          -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake \
-          -DTARGET_IOS=ON \
-          -DUSE_VULKAN=OFF \
-          -DCMAKE_OSX_ARCHITECTURES=arm64 \
-          -DCMAKE_BUILD_TYPE=Release
+        cmake .. -G"Xcode" -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake -DTARGET_IOS=ON -DCMAKE_PREFIX_PATH=$VULKAN_SDK -DBUILD_PSFPLAYER=ON -DBUILD_LIBRETRO_CORE=yes
 
-    - name: Build App manually
+    - name: Build
       run: |
         cd build
-        cmake --build . --config Release
+        cmake --build . --config Release -- -sdk iphoneos
+        codesign -s "-" Source/ui_ios/Release-iphoneos/Play.app || true
 
-    - name: Package IPA for sideloading
+    - name: Generate IPA
       run: |
         mkdir -p Payload
-        # Copier le .app généré par CMake
-        cp -r build/Release-iphoneos/Play.app Payload/
-        # Créer l'IPA
-        zip -r Play_iOS26_sideload.ipa Payload
+        cp -r build/Source/ui_ios/Release-iphoneos/Play.app Payload/
+        zip -r Play_iOS26.ipa Payload
 
     - name: Upload IPA
       uses: actions/upload-artifact@v4
       with:
-        name: Play_iOS26_sideload
-        path: Play_iOS26_sideload.ipa
-
+        name: Play_iOS_Vulkan
+        path: Play_iOS26.ipa
