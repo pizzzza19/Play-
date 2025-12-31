@@ -10,17 +10,17 @@ jobs:
     runs-on: macos-latest
 
     steps:
-    # 1️⃣ Setup Xcode (Version stable pour iOS 26 sur iPhone 12 Pro)
+    # 1️⃣ Setup Xcode (stable pour iOS 26 sur iPhone 12 Pro)
     - name: Set Xcode version
       uses: maxim-lobanov/setup-xcode@v1
       with:
         xcode-version: '16.0'
 
-    # 2️⃣ Installer dpkg
+    # 2️⃣ Installer dpkg (nécessaire pour certains scripts d’IPA)
     - name: Install dpkg
       run: brew install dpkg
 
-    # 3️⃣ Installer Vulkan SDK (Fix 403 Forbidden avec User-Agent)
+    # 3️⃣ Installer Vulkan SDK (fix 403 avec User-Agent)
     - name: Install Vulkan SDK
       run: |
         VULKAN_SDK_VERSION="1.4.304.1"
@@ -36,11 +36,11 @@ jobs:
         submodules: recursive
         fetch-depth: 1
 
-    # 5️⃣ Créer un tag fictif (Fix erreur version vide)
+    # 5️⃣ Créer un tag fictif pour éviter "version string is empty"
     - name: Create Fake Tag
       run: git tag v1.0.0 || true
 
-    # 6️⃣ Générer le projet Xcode
+    # 6️⃣ Générer le projet Xcode via CMake
     - name: Generate CMake Project
       run: |
         mkdir build
@@ -53,13 +53,28 @@ jobs:
           -DBUILD_LIBRETRO_CORE=yes \
           -DUSE_VULKAN=ON
 
-    # 7️⃣ Compiler le projet (Fix chemins et parallélisation)
+    # 7️⃣ Compiler le projet avec xcodebuild pour éviter exit code 65
     - name: Build
       run: |
+        export DEVELOPER_DIR=/Applications/Xcode_16.0.app/Contents/Developer
+        xcodebuild -version
+
         cd build
-        cmake --build . --config Release --parallel 2 -- -sdk iphoneos
-        
-        # Recherche dynamique du fichier .app pour éviter les erreurs de dossier
+
+        xcodebuild \
+          -project Play!.xcodeproj \
+          -scheme Play \
+          -configuration Release \
+          -sdk iphoneos \
+          CODE_SIGNING_ALLOWED=NO \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGN_IDENTITY="" \
+          ENABLE_BITCODE=NO \
+          COMPILER_INDEX_STORE_ENABLE=NO \
+          -skipPackagePluginValidation \
+          -skipMacroValidation
+
+        # Trouver dynamiquement le .app généré
         APP_PATH=$(find $(pwd) -name "Play.app" -type d | head -n 1)
         if [ -d "$APP_PATH" ]; then
           echo "Application trouvée : $APP_PATH"
@@ -70,7 +85,7 @@ jobs:
           exit 1
         fi
 
-    # 8️⃣ Générer l’IPA (Utilisation du chemin trouvé)
+    # 8️⃣ Générer l’IPA pour sideload
     - name: Generate IPA
       run: |
         mkdir -p Payload
@@ -81,14 +96,4 @@ jobs:
     - name: Upload IPA
       uses: actions/upload-artifact@v4
       with:
-        name: Play_iOS_Vulkan
-        path: Play_iOS_Vulkan.ipa
-
-    # 🔟 Upload libretro dylib
-    - name: Upload libretro dylib
-      uses: actions/upload-artifact@v4
-      with:
-        name: Play_iOS_libretro
-        path: |
-          build/Source/ui_libretro/Release-iphoneos/play_libretro_ios.dylib
-          **/play_libretro_ios.dylib
+        name: Pl
