@@ -1,0 +1,34 @@
+name: iOS Step 1 - Generate Xcode Project
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate-xcode:
+    runs-on: macos-14
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install CMake
+      run: |
+        brew install cmake
+
+    - name: Generate Xcode project with CMake
+      run: |
+        rm -rf build
+        mkdir build
+        cd build
+
+        cmake .. -G Xcode \
+          -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake \
+          -DTARGET_IOS=ON \
+          -DUSE_VULKAN=OFF \
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+
+    - name: List build directory
+      run: |
+        ls -la build
