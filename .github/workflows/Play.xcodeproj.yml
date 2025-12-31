@@ -1,4 +1,4 @@
-name: Build Play! iOS (JIT Enabled)
+name: Build Play! iOS (JIT Enabled - Final V2)
 
 on:
   push:
@@ -26,7 +26,7 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Generate CMake (Cible iOS)
+      - name: Generate CMake (Simulation Hardened Runtime Disabled)
         run: |
           mkdir build
           cd build
@@ -35,7 +35,8 @@ jobs:
             -DTARGET_IOS=ON \
             -DCMAKE_PREFIX_PATH=$VULKAN_SDK \
             -DUSE_VULKAN=ON \
-            -DBUILD_PSFPLAYER=OFF
+            -DBUILD_PSFPLAYER=OFF \
+            -DCMAKE_XCODE_ATTRIBUTE_ENABLE_HARDENED_RUNTIME=NO
 
       - name: Build Play! for iPhone
         run: |
@@ -47,26 +48,27 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO
+            CODE_SIGNING_REQUIRED=NO \
+            ENABLE_BITCODE=NO
 
           APP_PATH=$(find $(pwd) -name "Play.app" -type d | grep "Release-iphoneos" | head -n 1)
           echo "APP_FINAL_PATH=$APP_PATH" >> $GITHUB_ENV
 
-      - name: Fix Bundle ID & Sign (Triple Vérification)
+      - name: Fix Bundle ID & JIT Entitlements (A14 Optimized)
         run: |
           APP_DIR="${{ env.APP_FINAL_PATH }}"
           PLIST="$APP_DIR/Info.plist"
           
-          # 1. Correction du Bundle ID (Supprime la variable ${MACOSX...} qui fait planter Sideloadly)
+          # 1. Correction Bundle ID
           /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.dmamss.play" "$PLIST"
           
-          # 2. Permissions de fichiers et manettes (Essentiel pour jouer)
+          # 2. Injection des permissions de documents
           /usr/libexec/PlistBuddy -c "Delete :UIFileSharingEnabled" "$PLIST" || true
           /usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool true" "$PLIST"
           /usr/libexec/PlistBuddy -c "Delete :LSSupportsOpeningDocumentsInPlace" "$PLIST" || true
           /usr/libexec/PlistBuddy -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$PLIST"
 
-          # 3. Création du fichier Entitlements propre
+          # 3. Entitlements simulés pour bypasser la sandbox JIT (Crucial pour StikDebug)
           cat <<EOF > jit.entitlements
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -74,25 +76,29 @@ jobs:
           <dict>
               <key>get-task-allow</key>
               <true/>
+              <key>com.apple.security.get-task-allow</key>
+              <true/>
               <key>com.apple.developer.kernel.increased-memory-limit</key>
               <true/>
               <key>com.apple.developer.kernel.extended-virtual-addressing</key>
+              <true/>
+              <key>com.apple.private.security.no-sandbox</key>
               <true/>
           </dict>
           </plist>
           EOF
           
-          # 4. Signature finale pour iPhone
+          # 4. Signature avec entitlements étendus
           codesign --force --sign - --entitlements jit.entitlements "$APP_DIR"
 
       - name: Export IPA
         run: |
           mkdir Payload
           cp -r "${{ env.APP_FINAL_PATH }}" Payload/
-          zip -r Play_Final_Fix.ipa Payload
+          zip -r Play_JIT_Ready.ipa Payload
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Play-iOS-Final
-          path: Play_Final_Fix.ipa
+          name: Play-iOS-JIT
+          path: Play_JIT_Ready.ipa
