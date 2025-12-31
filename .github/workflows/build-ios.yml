@@ -1,28 +1,21 @@
-name: Build Play iOS JIT
+name: Build iOS
 
-on:
-  push:
-    branches: [ master, main ]
-  pull_request:
-    branches: [ master, main ]
-  workflow_dispatch:
+on: [push, pull_request]
 
 jobs:
   build_ios:
-    name: Build iOS (Xcode 26.1.1)
     runs-on: macos-15
-    
     steps:
       - name: Set Xcode version
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '26.1.1'
-          
-      - name: Install dependencies
+
+      - name: Install dpkg
         run: |
-          brew install dpkg cmake ninja
-          
-      - name: Install Vulkan SDK 1.4.309.0 (iOS)
+          brew install dpkg
+
+      - name: Install Vulkan SDK
         run: |
           cd $RUNNER_WORKSPACE
           curl -L --show-error --output vulkansdk.zip https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/mac/vulkansdk-macos-${VULKAN_SDK_VERSION}.zip?Human=true
@@ -41,12 +34,17 @@ jobs:
       - name: Force Fetch Git Tags
         run: git fetch --tags --force
 
+      - name: Set SHORT_HASH
+        run: echo "VALUE=${LONG_HASH:0:8}" >> $GITHUB_OUTPUT
+        id: short_hash
+        env:
+          LONG_HASH: ${{ github.sha }}
+
       - name: Generate CMake Project
         run: |
           mkdir build
           cd build
-          cmake .. \
-            -G "Xcode" \
+          cmake .. -G"Xcode" \
             -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake \
             -DTARGET_IOS=ON \
             -DCMAKE_PREFIX_PATH=$VULKAN_SDK \
@@ -54,30 +52,50 @@ jobs:
             -DBUILD_LIBRETRO_CORE=yes \
             -DENABLE_JIT=ON
 
-      - name: Build and Sign with JIT Entitlements
+      - name: Build
         run: |
           cd build
           cmake --build . --config Release
-          
           if [ -f "../Source/ui_ios/Play.entitlements" ]; then
-             echo "Applying JIT Entitlements..."
-             codesign -f -s "-" --entitlements "../Source/ui_ios/Play.entitlements" Source/ui_ios/Release-iphoneos/Play.app
+            codesign -f -s "-" --entitlements "../Source/ui_ios/Play.entitlements" Source/ui_ios/Release-iphoneos/Play.app
           else
-             echo "Warning: Entitlements not found, standard signing."
-             codesign -s "-" Source/ui_ios/Release-iphoneos/Play.app
+            codesign -s "-" Source/ui_ios/Release-iphoneos/Play.app
           fi
 
-      - name: Package IPA
+      - name: Generate IPA
         run: |
-          cd build
-          mkdir -p Payload
-          cp -r Source/ui_ios/Release-iphoneos/Play.app Payload/
-          zip -r Play_JIT_iOS26.ipa Payload
+          cd installer_ios
+          ./build_ipa.sh
 
-      - name: Upload Build Artifact
+      - name: Generate Cydia Package
+        run: |
+          cd installer_ios
+          ./build_cydia.sh
+
+      - name: Upload a Build Artifact ipa/deb/bz2
         uses: actions/upload-artifact@v4
         with:
-          name: Play_iOS_JIT_Latest
-          path: build/Play_JIT_iOS26.ipa
-          retention-days: 7
-        retention-days: 7
+          name: Play_iOS
+          path: |
+            installer_ios/Play.ipa
+            installer_ios/Play.deb
+            installer_ios/Packages.bz2
+
+      - name: Upload a Build Artifact libretro
+        uses: actions/upload-artifact@v4
+        with:
+          name: Play_iOS_libretro
+          path: build/Source/ui_libretro/Release-iphoneos/play_libretro_ios.dylib
+
+      - name: Upload to S3
+        if: ${{ env.AWS_ACCESS_KEY_ID != null}}
+        run: |
+          aws s3 cp installer_ios/Play.ipa s3://playbuilds/$SHORT_HASH/Play.ipa --acl public-read
+          aws s3 cp installer_ios/Play.deb s3://playbuilds/$SHORT_HASH/Play.deb --acl public-read
+          aws s3 cp installer_ios/Packages.bz2 s3://playbuilds/$SHORT_HASH/Packages.bz2 --acl public-read
+          aws s3 cp build/Source/ui_libretro/Release-iphoneos/play_libretro_ios.dylib s3://playbuilds/$SHORT_HASH/play_libretro_ios.dylib --acl public-read
+        env:
+          SHORT_HASH: ${{ steps.short_hash.outputs.VALUE }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: 'us-east-2'
