@@ -40,8 +40,3 @@
 }
 
 @end
-{
-	StopSimulateDebugger();
-}
-
-@end
