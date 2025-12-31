@@ -9,11 +9,11 @@ jobs:
   build_ios:
     runs-on: macos-latest
     steps:
-      # 1️⃣ Configuration Xcode
+      # 1️⃣ Configuration Xcode (Mise à jour vers la version détectée sur ton serveur)
       - name: Set Xcode version
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '15.4' # Version stable pour iOS 17/18 (Xcode 26 n'existe pas encore)
+          xcode-version: '26.1.1'
 
       # 2️⃣ Installation SDK Vulkan
       - name: Install Vulkan SDK
@@ -69,29 +69,28 @@ jobs:
           APP_PATH=$(find $(pwd) -name "Play.app" -type d | grep "Release-iphoneos" | head -n 1)
           echo "APP_FINAL_PATH=$APP_PATH" >> $GITHUB_ENV
 
-      # 6️⃣ Signature Robuste (Méthode MeloNX utilisant TES fichiers)
+      # 6️⃣ Signature Robuste (Méthode MeloNX utilisant TES fichiers Resources)
       - name: Patch App and Sign (MeloNX JIT-Ready)
         run: |
           APP_DIR="${{ env.APP_FINAL_PATH }}"
           
-          # Utilisation de TON fichier Entitlements robuste
+          # Chemins vers tes fichiers créés
           ENTITLEMENTS="Source/ui_ios/Resources/Play.entitlements"
+          INFO_PLIST_SRC="Source/ui_ios/Resources/Info.plist"
           
-          # Utilisation de TON Info.plist propre
-          INFO_PLIST="Source/ui_ios/Resources/Info.plist"
+          # 1. On s'assure que l'Info.plist final contient bien tes permissions
+          cp "$INFO_PLIST_SRC" "$APP_DIR/Info.plist"
           
-          # On injecte ton Info.plist dans le binaire compilé
-          cp "$INFO_PLIST" "$APP_DIR/Info.plist"
-          
-          # Signature forcée avec les droits de débogage pour StikDebug
+          # 2. Injection forcée des Entitlements de débogage (vAttach support)
+          # On utilise --force pour écraser toute signature existante
           codesign --force --sign - --entitlements "$ENTITLEMENTS" "$APP_DIR"
           
-          echo "Binaire Play! signé avec succès pour le JIT."
+          echo "Binaire Play! signé avec succès avec les droits MeloNX."
 
       # 7️⃣ Création de l'IPA
       - name: Create IPA
         run: |
-          mkdir Payload
+          mkdir -p Payload
           cp -r "${{ env.APP_FINAL_PATH }}" Payload/
           zip -r Play-JIT-Vulkan.ipa Payload
           
