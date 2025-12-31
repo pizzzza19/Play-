@@ -53,29 +53,30 @@ jobs:
           -DBUILD_LIBRETRO_CORE=yes \
           -DUSE_VULKAN=ON
 
-   # 7️⃣ Compiler le projet
+  # 7️⃣ Compiler le projet (Optimisé pour signature externe)
     - name: Build
       run: |
         cd build
-        # On utilise --build . pour que CMake trouve lui-même le fichier .xcodeproj peu importe son nom
-        cmake --build . --config Release --parallel 2 -- -sdk iphoneos
-        
-        # Recherche du dossier .app (on évite de chercher dans les dépendances)
-        APP_PATH=$(find ./Source -name "Play.app" -type d | head -n 1)
-        if [ -z "$APP_PATH" ]; then
-          APP_PATH=$(find . -name "Play.app" -type d | head -n 1)
-        fi
+        xcodebuild \
+          -project "$(find . -name '*.xcodeproj' | head -n 1)" \
+          -scheme Play \
+          -configuration Release \
+          -sdk iphoneos \
+          CODE_SIGNING_ALLOWED=NO \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGN_IDENTITY="" \
+          ENABLE_BITCODE=NO \
+          -skipPackagePluginValidation \
+          -skipMacroValidation
 
+        # Localisation de l'app
+        APP_PATH=$(find ./Source -name "Play.app" -type d | head -n 1)
         if [ -d "$APP_PATH" ]; then
-          echo "Application trouvée : $APP_PATH"
-          # On nettoie le chemin pour GitHub Env
           echo "APP_FINAL_PATH=$APP_PATH" >> $GITHUB_ENV
         else
-          echo "ERREUR : Play.app n'a pas été généré."
-          ls -R . # Affiche les fichiers pour debugger si ça échoue encore
+          echo "ERREUR : Play.app introuvable"
           exit 1
         fi
-
     # 8️⃣ Générer l’IPA pour sideload
     - name: Generate IPA
       run: |
