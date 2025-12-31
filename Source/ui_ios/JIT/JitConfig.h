@@ -1,4 +1,7 @@
-#pragma once
+#ifndef JIT_CONFIG_H
+#define JIT_CONFIG_H
+
+#include <stddef.h>
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
@@ -12,3 +15,5 @@
 #endif
 
 constexpr size_t PLAY_JIT_REGION_SIZE = 64 * 1024 * 1024;
+
+#endif
