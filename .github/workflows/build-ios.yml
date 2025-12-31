@@ -1,83 +1,84 @@
-name: Build Play! iOS with JIT
+name: Build Play! iOS JIT (Xcode 26 + Vulkan 1.4)
+
 on:
   push:
     branches: [ master, main ]
   pull_request:
     branches: [ master, main ]
-  workflow_dispatch: # Permet de lancer le build manuellement
+  workflow_dispatch:
 
 jobs:
-  build-ios:
-    name: Build iOS IPA
+  build_ios:
+    name: Build iOS (Xcode 26.1.1)
     runs-on: macos-15
-        
+    
     steps:
-    - name: Checkout repository
+    - name: Set Xcode version
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: '26.1.1'
+        
+    - name: Install dependencies
+      run: |
+        brew install dpkg cmake ninja
+        
+    - name: Install Vulkan SDK 1.4.309.0 (iOS)
+      run: |
+        cd $RUNNER_WORKSPACE
+        curl -L --show-error --output vulkansdk.zip https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/mac/vulkansdk-macos-${VULKAN_SDK_VERSION}.zip?Human=true
+        unzip vulkansdk.zip
+        sudo ./InstallVulkan-${VULKAN_SDK_VERSION}.app/Contents/MacOS/InstallVulkan-${VULKAN_SDK_VERSION} in --al --c com.lunarg.vulkan.ios
+        echo "VULKAN_SDK=${HOME}/VulkanSDK/${VULKAN_SDK_VERSION}/iOS" >> $GITHUB_ENV
+      env:
+        VULKAN_SDK_VERSION: '1.4.309.0'
+
+    - name: Checkout
       uses: actions/checkout@v4
       with:
         submodules: recursive
         fetch-depth: 0
-        
-    - name: Setup Xcode
-      uses: maxim-lobanov/setup-xcode@v1
-      with:
-        xcode-version: '26.1.1' # Version la plus récente disponible sur votre serveur
-        
-    - name: Install dependencies
+
+    - name: Force Fetch Git Tags
+      run: git fetch --tags --force
+
+    - name: Generate CMake Project
       run: |
-        brew install cmake ninja
-        
-    - name: Configure CMake for iOS
-      run: |
-        mkdir -p build
+        mkdir build
         cd build
         cmake .. \
-          -G Xcode \
-          -DCMAKE_SYSTEM_NAME=iOS \
-          -DCMAKE_OSX_ARCHITECTURES=arm64 \
-          -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
-          -DCMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM="" \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DBUILD_IOS=ON \
-          -DCMAKE_OSX_SYSROOT=iphoneos \
-          -DOPENGL_opengl_LIBRARY= \
-          -DOPENGL_gl_LIBRARY= 
-        
-    - name: Build for iOS
+          -G "Xcode" \
+          -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake \
+          -DTARGET_IOS=ON \
+          -DCMAKE_PREFIX_PATH=$VULKAN_SDK \
+          -DBUILD_PSFPLAYER=ON \
+          -DBUILD_LIBRETRO_CORE=yes \
+          -DENABLE_JIT=ON
+
+    - name: Build and Sign with JIT Entitlements
       run: |
         cd build
-        xcodebuild \
-          -project Play.xcodeproj \
-          -scheme Play \
-          -configuration Release \
-          -arch arm64 \
-          -sdk iphoneos \
-          CODE_SIGN_IDENTITY="" \
-          CODE_SIGNING_REQUIRED=NO \
-          CODE_SIGNING_ALLOWED=NO \
-          -allowProvisioningUpdates
+        cmake --build . --config Release
         
-    - name: Create IPA structure
-      run: |
-        cd build
-        mkdir -p Payload
-        cp -r Release-iphoneos/Play.app Payload/
-        
-        # Vérification et copie des entitlements
+        # Application de la signature ad-hoc avec tes entitlements JIT
         if [ -f "../Source/ui_ios/Play.entitlements" ]; then
-          cp ../Source/ui_ios/Play.entitlements Payload/Play.app/
-          echo "✅ Entitlements copied"
+           echo "🚀 Application des droits JIT (Entitlements)..."
+           codesign -f -s "-" --entitlements "../Source/ui_ios/Play.entitlements" Source/ui_ios/Release-iphoneos/Play.app
+        else
+           echo "⚠️ Fichier Play.entitlements non trouvé. Signature simple."
+           codesign -s "-" Source/ui_ios/Release-iphoneos/Play.app
         fi
-        
+
     - name: Package IPA
       run: |
         cd build
-        zip -r Play-JIT.ipa Payload
-        echo "📦 IPA created successfully"
-        
-    - name: Upload IPA artifact
+        mkdir -p Payload
+        cp -r Source/ui_ios/Release-iphoneos/Play.app Payload/
+        zip -r Play_JIT_iOS26.ipa Payload
+
+    - name: Upload Build Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Play-iOS-JIT
-        path: build/Play-JIT.ipa
+        name: Play_iOS_JIT_Latest
+        path: build/Play_JIT_iOS26.ipa
+        retention-days: 7
         retention-days: 30
