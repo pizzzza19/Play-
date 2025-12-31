@@ -1,4 +1,4 @@
-name: Build iOS Vulkan (PPSSPP Style)
+name: Build iOS Vulkan JIT-Ready
 
 on:
   push:
@@ -8,13 +8,14 @@ on:
 jobs:
   build_ios:
     runs-on: macos-latest
-
     steps:
+    # 1️⃣ Configuration Xcode
     - name: Set Xcode version
       uses: maxim-lobanov/setup-xcode@v1
       with:
         xcode-version: '26.1.1'
 
+    # 2️⃣ Installation SDK Vulkan
     - name: Install Vulkan SDK
       run: |
         VULKAN_SDK_VERSION="1.4.304.1"
@@ -23,6 +24,7 @@ jobs:
         sudo ./InstallVulkan-$VULKAN_SDK_VERSION.app/Contents/MacOS/InstallVulkan-$VULKAN_SDK_VERSION in --al --c com.lunarg.vulkan.ios
         echo "VULKAN_SDK=${HOME}/VulkanSDK/${VULKAN_SDK_VERSION}/iOS" >> $GITHUB_ENV
 
+    # 3️⃣ Checkout du code
     - name: Checkout Repository
       uses: actions/checkout@v4
       with:
@@ -32,6 +34,7 @@ jobs:
     - name: Create Fake Tag
       run: git tag v1.0.0 || true
 
+    # 4️⃣ Génération CMake
     - name: Generate CMake Project
       run: |
         mkdir build
@@ -41,54 +44,15 @@ jobs:
           -DTARGET_IOS=ON \
           -DCMAKE_PREFIX_PATH=$VULKAN_SDK \
           -DUSE_VULKAN=ON \
-          -DBUILD_PSFPLAYER=OFF
+          -DBUILD_PSFPLAYER=OFF \
+          -DBUILD_LIBRETRO_CORE=OFF
 
-    - name: Build & Inject PPSSPP Optimizations
+    # 5️⃣ Compilation
+    - name: Build
       run: |
         cd build
         PROJECT_PATH=$(find . -name "Play.xcodeproj" -not -path "*/AutoTest/*" | head -n 1)
         
-        # 1. Entitlements JIT (Indispensable pour StikDebug)
-        cat <<EOF > Play.entitlements
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>get-task-allow</key>
-            <true/>
-            <key>com.apple.developer.kernel.increased-memory-limit</key>
-            <true/>
-            <key>com.apple.developer.kernel.extended-virtual-addressing</key>
-            <true/>
-            <key>com.apple.security.exception.iokit-user-client-class</key>
-            <array>
-                <string>AGXCommandQueue</string><string>AGXDevice</string><string>AGXDeviceUserClient</string>
-                <string>IOSurfaceRootUserClient</string><string>IOAccelContext</string><string>IOAccelDevice</string>
-                <string>IOAccelSharedUserClient</string>
-            </array>
-        </dict>
-        </plist>
-        EOF
-
-        # 2. Injection Info.plist (Inspiré par PPSSPP)
-        INFOPLIST_PATH=$(find ../ios -name "Info.plist" | head -n 1)
-        
-        # Partage de fichiers (iTunes / Files app)
-        plutil -replace UIFileSharingEnabled -bool YES "$INFOPLIST_PATH"
-        plutil -replace LSSupportsOpeningDocumentsInPlace -bool YES "$INFOPLIST_PATH"
-        
-        # Support des manettes (MFi, DualShock, Xbox)
-        plutil -replace GCSupportedGameControllers -array -json '[{"GCKeyboardShortcutUsageType":"GCNonSpecificUserUsage"}]' "$INFOPLIST_PATH"
-        plutil -replace GCSupportsControllerUserInteraction -bool YES "$INFOPLIST_PATH"
-        
-        # Mode Paysage forcé
-        plutil -replace UISupportedInterfaceOrientations -array "UIInterfaceOrientationLandscapeLeft" "UIInterfaceOrientationLandscapeRight" "$INFOPLIST_PATH"
-        
-        # Cacher la barre d'état (Plein écran total)
-        plutil -replace UIStatusBarHidden -bool YES "$INFOPLIST_PATH"
-        plutil -replace UIViewControllerBasedStatusBarAppearance -bool NO "$INFOPLIST_PATH"
-
-        # 3. Build Xcode
         xcodebuild build \
           -project "$PROJECT_PATH" \
           -scheme Play \
@@ -99,21 +63,19 @@ jobs:
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGN_IDENTITY="" \
           AD_HOC_CODE_SIGNING_ALLOWED=YES \
-          CODE_SIGN_ENTITLEMENTS="Play.entitlements" \
           -skipPackagePluginValidation \
           -skipMacroValidation
 
+        # Détection dynamique du chemin de l'application compilée
         APP_PATH=$(find $(pwd) -name "Play.app" -type d | grep "Release-iphoneos" | head -n 1)
         echo "APP_FINAL_PATH=$APP_PATH" >> $GITHUB_ENV
 
-    - name: Generate IPA
+    # 6️⃣ Modification de l'Info.plist et Injection JIT (MeloNX Style)
+    - name: Patch App and Inject Entitlements
       run: |
-        mkdir -p Payload
-        cp -r "${{ env.APP_FINAL_PATH }}" Payload/
-        zip -r Play_Ultimate_PPSSPP_Style.ipa Payload
-
-    - name: Upload IPA
-      uses: actions/upload-artifact@v4
-      with:
-        name: Play_Ultimate_IPA
-        path: Play_Ultimate_PPSSPP_Style.ipa
+        # Accès direct à l'Info.plist dans le binaire
+        INFO_PLIST="${{ env.APP_FINAL_PATH }}/Info.plist"
+        
+        # Activation du partage de fichiers iTunes/Fichiers
+        plutil -replace UIFileSharingEnabled -bool YES "$INFO_PLIST"
+        plutil -replace LSSupports
