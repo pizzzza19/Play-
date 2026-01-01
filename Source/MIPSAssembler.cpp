@@ -7,7 +7,13 @@ CMIPSAssembler::CMIPSAssembler(uint32* ptr)
     : m_nextLabelId(1)
 {
 #if defined(PLAY_IOS_JIT)
+    // Redirige l'assembleur vers la zone mémoire JIT sécurisée
     m_ptr = (uint32*)JitMemory::GetBaseAddress();
+#else
+    m_ptr = ptr;
+#endif
+    m_startPtr = m_ptr;
+}
 #else
     m_ptr = ptr;
 #endif
@@ -491,6 +497,7 @@ void CMIPSAssembler::SYSCALL()
 	(*m_ptr) = 0x0000000C;
 	m_ptr++;
 }
+
 
 
 
