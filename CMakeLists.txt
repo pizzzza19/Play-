@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.15)
 
 # macOS deployment target needs to be set before 'project' to work
 if(APPLE AND NOT TARGET_IOS)
-	set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum OS X deployment version")
+	set(CMAKE_OSX_DEPLOYMENT_TARGET "16" CACHE STRING "Minimum OS X deployment version")
 endif()
 
 project(Play)
@@ -23,7 +23,7 @@ set(BUILD_AOT_CACHE OFF CACHE BOOL "Build AOT block cache (for PsfPlayer only)")
 set(BUILD_LIBRETRO_CORE OFF CACHE BOOL "Build Libretro Core")
 
 set(PROJECT_NAME "Play!")
-set(PROJECT_Version 0.30)
+set(PROJECT_Version 0.70)
 
 if(BUILD_TESTS)
 	enable_testing()
