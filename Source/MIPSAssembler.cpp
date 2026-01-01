@@ -13,6 +13,11 @@ CMIPSAssembler::CMIPSAssembler(uint32* ptr)
 #endif
     m_startPtr = m_ptr;
 }
+#else
+    m_ptr = ptr;
+#endif
+    m_startPtr = m_ptr;
+}
 }
 
 CMIPSAssembler::~CMIPSAssembler()
@@ -481,5 +486,6 @@ void CMIPSAssembler::SYSCALL()
 	(*m_ptr) = 0x0000000C;
 	m_ptr++;
 }
+
 
 
