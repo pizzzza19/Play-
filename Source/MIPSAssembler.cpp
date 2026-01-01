@@ -4,10 +4,15 @@
 #include "lexical_cast_ex.h"
 #include "JIT/JitMemory.h"
 CMIPSAssembler::CMIPSAssembler(uint32* ptr)
-    : m_ptr(ptr)
-    , m_startPtr(ptr)
-    , m_nextLabelId(1)
+    : m_nextLabelId(1)
 {
+#if defined(PLAY_IOS_JIT)
+    m_ptr = (uint32*)JitMemory::GetBaseAddress();
+#else
+    m_ptr = ptr;
+#endif
+    m_startPtr = m_ptr;
+}
 }
 
 CMIPSAssembler::~CMIPSAssembler()
@@ -476,4 +481,5 @@ void CMIPSAssembler::SYSCALL()
 	(*m_ptr) = 0x0000000C;
 	m_ptr++;
 }
+
 
