@@ -3,32 +3,16 @@
 #include <limits.h>
 #include "lexical_cast_ex.h"
 #include "JIT/JitMemory.h"
+
 CMIPSAssembler::CMIPSAssembler(uint32* ptr)
     : m_nextLabelId(1)
 {
 #if defined(PLAY_IOS_JIT)
-    // Redirige l'assembleur vers la zone mémoire JIT sécurisée
     m_ptr = (uint32*)JitMemory::GetBaseAddress();
 #else
     m_ptr = ptr;
 #endif
     m_startPtr = m_ptr;
-}
-#else
-    m_ptr = ptr;
-#endif
-    m_startPtr = m_ptr;
-}
-#else
-    m_ptr = ptr;
-#endif
-    m_startPtr = m_ptr;
-}
-#else
-    m_ptr = ptr;
-#endif
-    m_startPtr = m_ptr;
-}
 }
 
 CMIPSAssembler::~CMIPSAssembler()
@@ -417,88 +401,7 @@ void CMIPSAssembler::SD(unsigned int rt, uint16 offset, unsigned int base)
 	m_ptr++;
 }
 
-void CMIPSAssembler::SLL(unsigned int rd, unsigned int rt, unsigned int sa)
-{
-	sa &= 0x1F;
-	(*m_ptr) = (rt << 16) | (rd << 11) | (sa << 6);
-	m_ptr++;
-}
-
-void CMIPSAssembler::SLLV(unsigned int rd, unsigned int rt, unsigned int rs)
-{
-	(*m_ptr) = (rs << 21) | (rt << 16) | (rd << 11) | 0x04;
-	m_ptr++;
-}
-
-void CMIPSAssembler::SLT(unsigned int rd, unsigned int rs, unsigned int rt)
-{
-	(*m_ptr) = (rs << 21) | (rt << 16) | (rd << 11) | 0x2A;
-	m_ptr++;
-}
-
-void CMIPSAssembler::SLTI(unsigned int rt, unsigned int rs, uint16 immediate)
-{
-	(*m_ptr) = ((0x0A) << 26) | (rs << 21) | (rt << 16) | immediate;
-	m_ptr++;
-}
-
-void CMIPSAssembler::SLTIU(unsigned int rt, unsigned int rs, uint16 immediate)
-{
-	(*m_ptr) = ((0x0B) << 26) | (rs << 21) | (rt << 16) | immediate;
-	m_ptr++;
-}
-
-void CMIPSAssembler::SLTU(unsigned int rd, unsigned int rs, unsigned int rt)
-{
-	(*m_ptr) = (rs << 21) | (rt << 16) | (rd << 11) | 0x2B;
-	m_ptr++;
-}
-
-void CMIPSAssembler::SRA(unsigned int rd, unsigned int rt, unsigned int sa)
-{
-	sa &= 0x1F;
-	(*m_ptr) = (rt << 16) | (rd << 11) | (sa << 6) | 0x03;
-	m_ptr++;
-}
-
-void CMIPSAssembler::SRAV(unsigned int rd, unsigned int rt, unsigned int rs)
-{
-	(*m_ptr) = (rs << 21) | (rt << 16) | (rd << 11) | 0x07;
-	m_ptr++;
-}
-
-void CMIPSAssembler::SRL(unsigned int rd, unsigned int rt, unsigned int sa)
-{
-	sa &= 0x1F;
-	(*m_ptr) = (rt << 16) | (rd << 11) | (sa << 6) | 0x02;
-	m_ptr++;
-}
-
-void CMIPSAssembler::SRLV(unsigned int rd, unsigned int rt, unsigned int rs)
-{
-	(*m_ptr) = (rs << 21) | (rt << 16) | (rd << 11) | 0x06;
-	m_ptr++;
-}
-
-void CMIPSAssembler::SB(unsigned int rt, uint16 offset, unsigned int base)
-{
-	(*m_ptr) = ((0x28) << 26) | (base << 21) | (rt << 16) | offset;
-	m_ptr++;
-}
-
-void CMIPSAssembler::SW(unsigned int rt, uint16 offset, unsigned int base)
-{
-	(*m_ptr) = ((0x2B) << 26) | (base << 21) | (rt << 16) | offset;
-	m_ptr++;
-}
-
-void CMIPSAssembler::SYSCALL()
-{
-	(*m_ptr) = 0x0000000C;
-	m_ptr++;
-}
-
-
+void
 
 
 
