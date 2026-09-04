@@ -995,6 +995,15 @@ void CDrawDesktop::FlushVertices()
 	{
 		m_context->annotations.PushCommandLabel(commandBuffer, string_format("Draw (FBP: 0x%06X, ZBP: 0x%06X)", m_pushConstants.fbBufAddr, m_pushConstants.depthBufAddr).c_str());
 
+		auto memoryBarrier = Framework::Vulkan::MemoryBarrier();
+		memoryBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+		memoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+		m_context->device.vkCmdPipelineBarrier(commandBuffer,
+		                                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+		                                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+		                                       0, 1, &memoryBarrier, 0, nullptr, 0, nullptr);
+
 		auto renderPassBeginInfo = Framework::Vulkan::RenderPassBeginInfo();
 		renderPassBeginInfo.renderPass = m_renderPass;
 		renderPassBeginInfo.renderArea.extent.width = DRAW_AREA_SIZE;
