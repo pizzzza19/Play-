@@ -689,6 +689,7 @@ void CSys246::SetAxisState(unsigned int padNumber, PS2::CControllerInfo::BUTTON 
 			break;
 		}
 	}
+}
 
 void CSys246::SetScreenPosition(float x, float y)
 {
