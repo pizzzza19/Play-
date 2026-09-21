@@ -649,8 +649,8 @@ void CSys246::SetAxisState(unsigned int padNumber, PS2::CControllerInfo::BUTTON 
 {
 	if((m_jvsMode == JVS_MODE::DEFAULT) && (padNumber < JVS_PLAYER_COUNT))
 	{
-		constexpr uint8 ANALOG_DPAD_LOW_THRESHOLD = 0x0D;
-		constexpr uint8 ANALOG_DPAD_HIGH_THRESHOLD = 0xF2;
+		constexpr uint8 ANALOG_DPAD_LOW_THRESHOLD = 0x60;
+		constexpr uint8 ANALOG_DPAD_HIGH_THRESHOLD = 0xA0;
 		auto& axisButtonState = m_jvsAxisButtonState[padNumber];
 
 		switch(button)
