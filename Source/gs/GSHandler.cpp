@@ -126,6 +126,7 @@ CGSHandler::~CGSHandler()
 
 void CGSHandler::RegisterPreferences()
 {
+	CAppConfig::GetInstance().RegisterPreferenceInteger(PREF_CGSHANDLER_RESOLUTION_FACTOR, 1);
 	CAppConfig::GetInstance().RegisterPreferenceInteger(PREF_CGSHANDLER_PRESENTATION_MODE, CGSHandler::PRESENTATION_MODE_FIT);
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREF_CGSHANDLER_GS_RAM_READS_ENABLED, true);
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREF_CGSHANDLER_WIDESCREEN, false);
@@ -198,6 +199,13 @@ CGSHandler::PRESENTATION_VIEWPORT CGSHandler::GetPresentationViewport() const
 {
 	PRESENTATION_VIEWPORT viewport;
 	auto sourceSize = std::make_pair(GetCrtWidth(), GetCrtHeight());
+
+	//720x480(HDTV_480P) should be 4:3
+	if(m_crtMode == CRT_MODE_HDTV_480P)
+	{
+		sourceSize = std::make_pair(640u, 480u);
+	}
+
 	if(CAppConfig::GetInstance().GetPreferenceBoolean(PREF_CGSHANDLER_WIDESCREEN))
 	{
 		sourceSize = std::make_pair(1920, 1080);

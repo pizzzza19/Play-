@@ -1,5 +1,8 @@
 #pragma once
 
+//Keep the existing configuration key so saved resolution settings remain compatible.
+#define PREF_CGSHANDLER_RESOLUTION_FACTOR "renderer.opengl.resfactor"
+
 #include <thread>
 #include <vector>
 #include <functional>
@@ -823,6 +826,11 @@ public:
 
 	static void RegisterPreferences();
 	void NotifyPreferencesChanged();
+
+	// Renderer-specific opt-in for upscaled arcade sprite boundaries.
+	virtual void SetSpriteAlignmentEnabled(bool enabled)
+	{
+	}
 
 	void SetIntc(CINTC*);
 	void Reset();

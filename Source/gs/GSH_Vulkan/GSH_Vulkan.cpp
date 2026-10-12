@@ -203,6 +203,11 @@ void CGSH_Vulkan::InitializeImpl()
 	m_context->annotations.SetImageViewName(m_context->swizzleTablePSMZ16View, "Swizzle Table View PSMZ16");
 	m_context->annotations.SetImageViewName(m_context->swizzleTablePSMZ16SView, "Swizzle Table View PSMZ16S");
 
+	CreateRenderingResources();
+}
+
+void CGSH_Vulkan::CreateRenderingResources()
+{
 	m_frameCommandBuffer = std::make_shared<CFrameCommandBuffer>(m_context);
 	m_clutLoad = std::make_shared<CClutLoad>(m_context, m_frameCommandBuffer);
 #if GSH_VULKAN_IS_DESKTOP
@@ -222,6 +227,7 @@ void CGSH_Vulkan::InitializeImpl()
 	m_frameCommandBuffer->RegisterWriter(m_draw.get());
 	m_frameCommandBuffer->RegisterWriter(m_transferHost.get());
 	m_frameCommandBuffer->BeginFrame();
+	m_framebufferScale = m_context->framebufferScale;
 }
 
 void CGSH_Vulkan::ReleaseImpl()
@@ -231,12 +237,7 @@ void CGSH_Vulkan::ReleaseImpl()
 	//Flush any pending rendering commands
 	m_context->device.vkQueueWaitIdle(m_context->queue);
 
-	m_clutLoad.reset();
-	m_draw.reset();
-	m_present.reset();
-	m_transferHost.reset();
-	m_transferLocal.reset();
-	m_frameCommandBuffer.reset();
+	ReleaseRenderingResources();
 
 	m_context->device.vkDestroyImageView(m_context->device, m_context->swizzleTablePSMCT32View, nullptr);
 	m_context->device.vkDestroyImageView(m_context->device, m_context->swizzleTablePSMCT16View, nullptr);
@@ -268,8 +269,19 @@ void CGSH_Vulkan::ReleaseImpl()
 	m_memoryCache = nullptr;
 }
 
+void CGSH_Vulkan::ReleaseRenderingResources()
+{
+	m_clutLoad.reset();
+	m_draw.reset();
+	m_present.reset();
+	m_transferHost.reset();
+	m_transferLocal.reset();
+	m_frameCommandBuffer.reset();
+}
+
 void CGSH_Vulkan::ResetImpl()
 {
+	m_spriteAlignmentEnabled = false;
 	m_vtxCount = 0;
 	m_primitiveType = PRIM_INVALID;
 	m_pendingPrim = false;
@@ -278,6 +290,52 @@ void CGSH_Vulkan::ResetImpl()
 	ClearClutCache();
 	memset(m_memoryCache, 0, RAMSIZE);
 	WriteBackMemoryCache();
+}
+
+void CGSH_Vulkan::SetSpriteAlignmentEnabled(bool enabled)
+{
+	SendGSCall([this, enabled]() {
+		if(m_draw) m_draw->FlushVertices();
+		m_spriteAlignmentEnabled = enabled;
+	});
+}
+
+uint32 CGSH_Vulkan::GetRequestedFramebufferScale() const
+{
+	auto requested = CAppConfig::GetInstance().GetPreferenceInteger(PREF_CGSHANDLER_RESOLUTION_FACTOR);
+	if(requested <= 1) return 1;
+	uint32 scale = 1;
+	while(scale < m_context->maxFramebufferScale && (scale * 2) <= static_cast<uint32>(requested))
+		scale *= 2;
+	return scale;
+}
+
+void CGSH_Vulkan::NotifyPreferencesChangedImpl()
+{
+	CGSHandler::NotifyPreferencesChangedImpl();
+	if(m_context->device.IsEmpty()) return;
+	auto scale = GetRequestedFramebufferScale();
+	if(scale == m_context->framebufferScale) return;
+
+	//Finish commands before replacing buffers and descriptors. Keep native GS contents.
+	SyncMemoryCache();
+	std::vector<uint8> memory(m_memoryCache, m_memoryCache + RAMSIZE);
+	ReleaseRenderingResources();
+	m_context->device.vkDestroyDescriptorPool(m_context->device, m_context->descriptorPool, nullptr);
+	m_context->memoryBuffer.Reset();
+	m_context->memoryBufferCopy.Reset();
+	m_context->memoryBufferTransfer.Reset();
+	delete[] m_memoryCache;
+	m_memoryCache = nullptr;
+	m_context->framebufferScale = scale;
+	CreateDescriptorPool();
+	CreateMemoryBuffer();
+	CreateRenderingResources();
+	memcpy(m_memoryCache, memory.data(), RAMSIZE);
+	WriteBackMemoryCache();
+	ClearClutCache();
+	m_regState.isValid = false;
+	if(m_present) m_present->ValidateSwapChain(m_presentationParams);
 }
 
 void CGSH_Vulkan::SetPresentationParams(const CGSHandler::PRESENTATION_PARAMS& presentationParams)
@@ -436,6 +494,10 @@ void CGSH_Vulkan::CreateDevice(VkPhysicalDevice physicalDevice)
 {
 	assert(m_context->device.IsEmpty());
 
+	VkPhysicalDeviceFeatures supportedFeatures = {};
+	auto getFeatures = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures>(
+	    Framework::Vulkan::CLoader::GetInstance().vkGetInstanceProcAddr(m_instance, "vkGetPhysicalDeviceFeatures"));
+	getFeatures(physicalDevice, &supportedFeatures);
 	float queuePriorities[] = {1.0f};
 
 	auto deviceQueueCreateInfo = Framework::Vulkan::DeviceQueueCreateInfo();
@@ -470,6 +532,8 @@ void CGSH_Vulkan::CreateDevice(VkPhysicalDevice physicalDevice)
 #endif
 #if GSH_VULKAN_IS_DESKTOP
 		physicalDeviceFeatures2.features.shaderInt16 = VK_TRUE;
+		physicalDeviceFeatures2.features.largePoints = supportedFeatures.largePoints;
+		physicalDeviceFeatures2.features.wideLines = supportedFeatures.wideLines;
 #endif
 		createDeviceStructs.AddStruct(physicalDeviceFeatures2);
 	}
@@ -508,6 +572,24 @@ void CGSH_Vulkan::CreateDevice(VkPhysicalDevice physicalDevice)
 		m_context->instance->vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
 		m_context->storageBufferAlignment = deviceProperties.limits.minStorageBufferOffsetAlignment;
 		m_context->computeWorkgroupInvocations = deviceProperties.limits.maxComputeWorkGroupInvocations;
+#if GSH_VULKAN_IS_DESKTOP
+		const auto& limits = deviceProperties.limits;
+		//Each subpixel has a separate GS memory plane. Bound all resources by device limits.
+		uint32 maxScale = 1;
+		while(maxScale < 16)
+		{
+			uint32 nextScale = maxScale * 2;
+			uint32 drawSize = 2048 * nextScale;
+			if(VkDeviceSize(RAMSIZE) * nextScale * nextScale > limits.maxStorageBufferRange ||
+			   drawSize > limits.maxImageDimension2D || drawSize > limits.maxFramebufferWidth ||
+			   drawSize > limits.maxFramebufferHeight || drawSize > limits.maxViewportDimensions[0] ||
+			   drawSize > limits.maxViewportDimensions[1] || nextScale > limits.pointSizeRange[1] ||
+			   nextScale > limits.lineWidthRange[1]) break;
+			maxScale = nextScale;
+		}
+		m_context->maxFramebufferScale = (supportedFeatures.largePoints && supportedFeatures.wideLines) ? maxScale : 1;
+#endif
+		m_context->framebufferScale = GetRequestedFramebufferScale();
 	}
 
 	m_context->annotations = decltype(m_context->annotations)(m_context->instance, &m_context->device);
@@ -565,16 +647,17 @@ void CGSH_Vulkan::CreateMemoryBuffer()
 {
 	assert(m_context->memoryBuffer.IsEmpty());
 	assert(!m_memoryCache);
+	auto memorySize = m_context->GetMemorySize();
 
 	m_context->memoryBuffer = Framework::Vulkan::CBuffer(m_context->device,
 	                                                     m_context->physicalDeviceMemoryProperties,
 	                                                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 	                                                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-	                                                     RAMSIZE);
+	                                                     memorySize);
 	m_context->annotations.SetBufferName(m_context->memoryBuffer, "GS Memory");
 
-	m_memoryCache = new uint8[RAMSIZE];
-	memset(m_memoryCache, 0, RAMSIZE);
+	m_memoryCache = new uint8[memorySize];
+	memset(m_memoryCache, 0, memorySize);
 
 	m_context->memoryBuffer.Write(m_context->queue, m_context->commandBufferPool,
 	                              m_context->physicalDeviceMemoryProperties, m_memoryCache);
@@ -583,7 +666,7 @@ void CGSH_Vulkan::CreateMemoryBuffer()
 	                                                         m_context->physicalDeviceMemoryProperties,
 	                                                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 	                                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-	                                                         RAMSIZE);
+	                                                         memorySize);
 	m_context->annotations.SetBufferName(m_context->memoryBufferCopy, "GS Memory Copy");
 
 	m_context->memoryBufferTransfer = Framework::Vulkan::CBuffer(m_context->device,
@@ -876,6 +959,19 @@ void CGSH_Vulkan::SetRenderingContext(uint64 primReg)
 
 		pipelineCaps.textureUseLinearFiltering = (minLinear && magLinear);
 	}
+
+	// Namco's 8-bit channel conversion uses a 64x32 scratch framebuffer.
+	// Its texels represent bytes, so interpolation must remain on the native grid.
+#if GSH_VULKAN_IS_DESKTOP
+	bool nativeCoordinates = m_spriteAlignmentEnabled &&
+	                         (m_context->framebufferScale > 1) && (m_primitiveType == PRIM_SPRITE) &&
+	                         prim.nTexture && prim.nUseUV && !prim.nAlpha && !prim.nFog &&
+	                         (tex0.nPsm == PSMT8) && (frame.nPsm == PSMCT32) && (frame.GetWidth() == 64) &&
+	                         (tex0.GetWidth() == 128) && (tex0.GetHeight() == 64) &&
+	                         ((frame.nMask == 0xFFFFFF00) || (frame.nMask == 0xFFFF00FF) || (frame.nMask == 0xFF00FFFF)) &&
+	                         !pipelineCaps.textureUseLinearFiltering;
+	if(nativeCoordinates) pipelineCaps.primitiveType = CDraw::PIPELINE_PRIMITIVE_NATIVE_SPRITE;
+#endif
 
 	if(prim.nAlpha)
 	{
@@ -1282,6 +1378,17 @@ void CGSH_Vulkan::Prim_Sprite()
 
 			t[0] = uv[0].GetV() / static_cast<float>(m_texHeight);
 			t[1] = uv[1].GetV() / static_cast<float>(m_texHeight);
+
+			// Opt-in Namco alignment: preserve native rendering and extend only
+			// a forward sprite's half-pixel right edge with an integer U endpoint.
+			// Extend U with X; rounding all XY endpoints changes texture mapping.
+			if(m_spriteAlignmentEnabled && (m_context->framebufferScale > 1) &&
+			   (x2 > x1) && ((static_cast<int32>(x2 * 16) & 0xF) == 8) &&
+			   ((static_cast<int32>(uv[1].GetU() * 16) & 0xF) == 0))
+			{
+				x2 += 0.5f;
+				s[1] += 0.5f / m_texWidth;
+			}
 		}
 		else
 		{
@@ -1319,6 +1426,15 @@ void CGSH_Vulkan::Prim_Sprite()
 		{x2, y2, z, color, s[1], t[1], 1, f},
 	};
 	// clang-format on
+
+	if(m_draw->UsesNativeSpriteCoordinates() && x2 != x1 && y2 != y1)
+	{
+		for(auto& vertex : vertices)
+		{
+			vertex.ds = (s[1] - s[0]) / (x2 - x1);
+			vertex.dt = (t[1] - t[0]) / (y2 - y1);
+		}
+	}
 
 	{
 		const auto topLeftCorner = vertices;
@@ -1582,7 +1698,14 @@ void CGSH_Vulkan::ProcessLocalToLocalTransfer()
 		bufferCopy.dstOffset = transferAddress;
 		bufferCopy.size = transferSize;
 
-		m_context->device.vkCmdCopyBuffer(commandBuffer, m_context->memoryBuffer, m_context->memoryBufferCopy, 1, &bufferCopy);
+		std::vector<VkBufferCopy> copies(m_context->GetSampleCount(), bufferCopy);
+		for(uint32 sample = 0; sample < copies.size(); sample++)
+		{
+			copies[sample].srcOffset += VkDeviceSize(sample) * CGSHandler::RAMSIZE;
+			copies[sample].dstOffset += VkDeviceSize(sample) * CGSHandler::RAMSIZE;
+		}
+		m_context->device.vkCmdCopyBuffer(commandBuffer, m_context->memoryBuffer, m_context->memoryBufferCopy,
+		                                  static_cast<uint32>(copies.size()), copies.data());
 
 		pipelineCaps.srcUseMemoryCopy = true;
 	}
@@ -1611,6 +1734,11 @@ void CGSH_Vulkan::WriteBackMemoryCache()
 	m_frameCommandBuffer->Flush();
 	m_context->device.vkQueueWaitIdle(m_context->queue);
 
+	//Save-state loads and CPU writes only contain native GS memory.
+	for(uint32 sample = 1; sample < m_context->GetSampleCount(); sample++)
+	{
+		memcpy(m_memoryCache + VkDeviceSize(sample) * RAMSIZE, m_memoryCache, RAMSIZE);
+	}
 	m_context->memoryBuffer.Write(m_context->queue, m_context->commandBufferPool,
 	                              m_context->physicalDeviceMemoryProperties, m_memoryCache);
 }
@@ -1740,7 +1868,7 @@ Framework::CBitmap CGSH_Vulkan::GetTexture(uint64 tex0Reg, uint32 maxMip, uint64
 
 int CGSH_Vulkan::GetFramebufferScale()
 {
-	return 1;
+	return m_framebufferScale;
 }
 
 const CGSHandler::VERTEX* CGSH_Vulkan::GetInputVertices() const
@@ -1763,25 +1891,25 @@ Framework::CBitmap CGSH_Vulkan::GetFramebufferImpl(uint64 frameReg)
 	case PSMCT32:
 	{
 		bitmap = ReadImage32<CGsPixelFormats::CPixelIndexorPSMCT32>(GetRam(), frame.GetBasePtr(),
-		                                                            frame.nWidth, frameWidth, frameHeight);
+		                                                            frame.nWidth, frameWidth, frameHeight, m_context->framebufferScale);
 	}
 	break;
 	case PSMCT24:
 	{
 		bitmap = ReadImage32<CGsPixelFormats::CPixelIndexorPSMCT32, 0x00FFFFFF>(GetRam(), frame.GetBasePtr(),
-		                                                                        frame.nWidth, frameWidth, frameHeight);
+		                                                                        frame.nWidth, frameWidth, frameHeight, m_context->framebufferScale);
 	}
 	break;
 	case PSMCT16:
 	{
 		bitmap = ReadImage16<CGsPixelFormats::CPixelIndexorPSMCT16>(GetRam(), frame.GetBasePtr(),
-		                                                            frame.nWidth, frameWidth, frameHeight);
+		                                                            frame.nWidth, frameWidth, frameHeight, m_context->framebufferScale);
 	}
 	break;
 	case PSMCT16S:
 	{
 		bitmap = ReadImage16<CGsPixelFormats::CPixelIndexorPSMCT16S>(GetRam(), frame.GetBasePtr(),
-		                                                             frame.nWidth, frameWidth, frameHeight);
+		                                                             frame.nWidth, frameWidth, frameHeight, m_context->framebufferScale);
 	}
 	break;
 	default:
@@ -1807,19 +1935,19 @@ Framework::CBitmap CGSH_Vulkan::GetDepthbufferImpl(uint64 frameReg, uint64 zbufR
 	case PSMZ32:
 	{
 		bitmap = ReadImage32<CGsPixelFormats::CPixelIndexorPSMZ32>(GetRam(), zbuf.GetBasePtr(),
-		                                                           frame.nWidth, frameWidth, frameHeight);
+		                                                           frame.nWidth, frameWidth, frameHeight, m_context->framebufferScale);
 	}
 	break;
 	case PSMZ24:
 	{
 		bitmap = ReadImage32<CGsPixelFormats::CPixelIndexorPSMZ32, 0x00FFFFFF>(GetRam(), zbuf.GetBasePtr(),
-		                                                                       frame.nWidth, frameWidth, frameHeight);
+		                                                                       frame.nWidth, frameWidth, frameHeight, m_context->framebufferScale);
 	}
 	break;
 	case PSMZ16S:
 	{
 		bitmap = ReadImage16<CGsPixelFormats::CPixelIndexorPSMZ16S>(GetRam(), zbuf.GetBasePtr(),
-		                                                            frame.nWidth, frameWidth, frameHeight);
+		                                                            frame.nWidth, frameWidth, frameHeight, m_context->framebufferScale);
 	}
 	break;
 	default:

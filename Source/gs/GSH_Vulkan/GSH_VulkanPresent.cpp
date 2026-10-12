@@ -39,6 +39,7 @@ CPresent::~CPresent()
 	for(const auto& presentCommandBuffer : m_presentCommandBuffers)
 	{
 		m_context->device.vkDestroyFence(m_context->device, presentCommandBuffer.execCompleteFence, nullptr);
+		m_context->commandBufferPool.FreeBuffer(presentCommandBuffer.commandBuffer);
 	}
 	m_context->device.vkDestroyRenderPass(m_context->device, m_renderPass, nullptr);
 }
@@ -733,31 +734,48 @@ Framework::Vulkan::CShaderModule CPresent::CreateFragmentShader(const PIPELINE_C
 		auto bufWidth = presentBufParams->y();
 		auto layerSize = presentRectParams->zw();
 
-		auto screenPos = ToInt(inputTexCoord->xy() * ToFloat(layerSize));
-
-		switch(caps.bufPsm)
+		auto scale = NewInt(b, m_context->framebufferScale);
+		// Preserve native Vulkan presentation at x1. At higher resolutions,
+		// filter the actual high-resolution samples.
+		float sampleOffset = (m_context->framebufferScale == 1) ? 0.f : -0.5f;
+		auto samplePosition = inputTexCoord->xy() * ToFloat(layerSize) *
+		                          NewFloat2(b, m_context->framebufferScale, m_context->framebufferScale) +
+		                      NewFloat2(b, sampleOffset, sampleOffset);
+		auto fraction = Fract(samplePosition);
+		auto sample0 = ToInt(samplePosition + fraction * NewFloat2(b, -1, -1));
+		auto sample1 = sample0 + NewInt2(b, 1, 1);
+		auto sampleMax = layerSize * NewInt2(b, m_context->framebufferScale, m_context->framebufferScale) + NewInt2(b, -1, -1);
+		auto readSample = [&](CInt2Value sample) {
+			auto clamped = NewInt2(Clamp(sample->x(), NewInt(b, 0), sampleMax->x()),
+			                       Clamp(sample->y(), NewInt(b, 0), sampleMax->y()));
+			auto screenPos = clamped / NewInt2(b, m_context->framebufferScale, m_context->framebufferScale);
+			auto sampleIndex = (clamped->x() % scale) + (clamped->y() % scale) * scale;
+			if((caps.bufPsm == CGSHandler::PSMCT16) || (caps.bufPsm == CGSHandler::PSMCT16S))
+			{
+				auto nativeAddress = CMemoryUtils::GetPixelAddress<CGsPixelFormats::STORAGEPSMCT16>(b, swizzleTable, bufAddress, bufWidth, screenPos);
+				auto address = (nativeAddress & NewInt(b, CGSHandler::RAMSIZE - 1)) + sampleIndex * NewInt(b, CGSHandler::RAMSIZE);
+				return CMemoryUtils::PSM16ToVec4(b, CMemoryUtils::Memory_Read16(b, memoryBuffer, address));
+			}
+			assert((caps.bufPsm == CGSHandler::PSMCT32) || (caps.bufPsm == CGSHandler::PSMCT24));
+			auto nativeAddress = CMemoryUtils::GetPixelAddress<CGsPixelFormats::STORAGEPSMCT32>(b, swizzleTable, bufAddress, bufWidth, screenPos);
+			auto address = (nativeAddress & NewInt(b, CGSHandler::RAMSIZE - 1)) + sampleIndex * NewInt(b, CGSHandler::RAMSIZE);
+			return CMemoryUtils::PSM32ToVec4(b, CMemoryUtils::Memory_Read32(b, memoryBuffer, address));
+		};
+		auto a = readSample(sample0);
+		if(m_context->framebufferScale == 1)
 		{
-		default:
-			assert(false);
-			[[fallthrough]];
-		case CGSHandler::PSMCT32:
-		case CGSHandler::PSMCT24:
-		{
-			auto address = CMemoryUtils::GetPixelAddress<CGsPixelFormats::STORAGEPSMCT32>(
-			    b, swizzleTable, bufAddress, bufWidth, screenPos);
-			auto imageColor = CMemoryUtils::Memory_Read32(b, memoryBuffer, address);
-			outputColor = CMemoryUtils::PSM32ToVec4(b, imageColor);
+			outputColor = a;
 		}
-		break;
-		case CGSHandler::PSMCT16:
-		case CGSHandler::PSMCT16S:
+		else
 		{
-			auto address = CMemoryUtils::GetPixelAddress<CGsPixelFormats::STORAGEPSMCT16>(
-			    b, swizzleTable, bufAddress, bufWidth, screenPos);
-			auto imageColor = CMemoryUtils::Memory_Read16(b, memoryBuffer, address);
-			outputColor = CMemoryUtils::PSM16ToVec4(b, imageColor);
-		}
-		break;
+			auto c = readSample(NewInt2(sample0->x(), sample1->y()));
+			auto d = readSample(sample1);
+			auto right = readSample(NewInt2(sample1->x(), sample0->y()));
+			auto one = NewFloat(b, 1);
+			outputColor = a * ((one - fraction->x()) * (one - fraction->y()))->xxxx() +
+			              right * (fraction->x() * (one - fraction->y()))->xxxx() +
+			              c * ((one - fraction->x()) * fraction->y())->xxxx() +
+			              d * (fraction->x() * fraction->y())->xxxx();
 		}
 	}
 
