@@ -11,6 +11,7 @@
 #include "GsPixelFormats.h"
 #include "string_format.h"
 #include "ThreadUtils.h"
+#include "../uint128.h"
 
 //Shadow Hearts 2 looks for this specific value
 #define GS_REVISION (7)
@@ -73,6 +74,18 @@ CGSHandler::CGSHandler(bool gsThreaded)
 	for(int i = 0; i < MAX_INFLIGHT_FRAMES; i++)
 	{
 		m_writeBuffers[i] = new RegisterWrite[REGISTERWRITEBUFFER_SIZE];
+	}
+#ifndef DEBUGGER_INCLUDED
+	m_threadedGif = m_gsThreaded;
+#endif
+	if(m_threadedGif)
+	{
+		for(int i = 0; i < MAX_INFLIGHT_FRAMES; i++)
+		{
+			m_packedGifData[i] = std::make_unique<uint8[]>(PACKED_GIF_BYTES);
+			m_packedGifSpans[i] = std::make_unique<PACKEDGIFSPAN[]>(PACKED_GIF_SPANS);
+			m_packedGifKinds[i] = std::make_unique<uint8[]>(REGISTERWRITEBUFFER_SIZE);
+		}
 	}
 
 	for(int i = 0; i < PSM_MAX; i++)
@@ -143,6 +156,7 @@ void CGSHandler::SetIntc(CINTC* intc)
 
 void CGSHandler::Reset()
 {
+	SendGSCall([]() {}, true);
 	ResetBase();
 	SendGSCall(std::bind(&CGSHandler::ResetImpl, this), true);
 }
@@ -179,6 +193,9 @@ void CGSHandler::ResetBase()
 	m_writeBufferSubmitIndex = 0;
 	m_writeBufferIndex = 0;
 	m_currentWriteBuffer = m_writeBuffers[m_writeBufferIndex];
+	m_packedGifBytes = 0;
+	m_packedGifSpanCount = 0;
+	m_packedGifPendingQwords = 0;
 }
 
 void CGSHandler::ResetImpl()
@@ -256,6 +273,8 @@ CGSHandler::PRESENTATION_VIEWPORT CGSHandler::GetPresentationViewport() const
 
 void CGSHandler::SaveState(Framework::CZipArchiveWriter& archive)
 {
+	assert(m_writeBufferProcessIndex == m_writeBufferSize);
+	SubmitWriteBuffer();
 	SendGSCall([&]() { SyncMemoryCache(); }, true);
 
 	archive.InsertFile(std::make_unique<CMemoryStateFile>(STATE_RAM, GetRam(), RAMSIZE));
@@ -285,6 +304,9 @@ void CGSHandler::SaveState(Framework::CZipArchiveWriter& archive)
 
 void CGSHandler::LoadState(Framework::CZipArchiveReader& archive)
 {
+	assert(m_writeBufferProcessIndex == m_writeBufferSize);
+	SubmitWriteBuffer();
+	SendGSCall([]() {}, true);
 	archive.BeginReadFile(STATE_RAM)->Read(GetRam(), RAMSIZE);
 	archive.BeginReadFile(STATE_REGS)->Read(m_nReg, sizeof(uint64) * CGSHandler::REGISTER_MAX);
 	archive.BeginReadFile(STATE_TRXCTX)->Read(&m_trxCtx, sizeof(TRXCONTEXT));
@@ -311,6 +333,7 @@ void CGSHandler::LoadState(Framework::CZipArchiveReader& archive)
 
 void CGSHandler::Copy(CGSHandler* source)
 {
+	source->SubmitWriteBuffer();
 	source->SendGSCall([source]() { source->SyncMemoryCache(); }, true);
 
 	memcpy(GetRam(), source->GetRam(), RAMSIZE);
@@ -706,7 +729,8 @@ void CGSHandler::ProcessWriteBuffer(const CGsPacketMetadata* metadata)
 	}
 	m_writeBufferProcessIndex = m_writeBufferSize;
 	uint32 submitPending = m_writeBufferProcessIndex - m_writeBufferSubmitIndex;
-	if(submitPending >= REGISTERWRITEBUFFER_SUBMIT_THRESHOLD)
+	// Keep event processing immediate; batch only host GS submissions.
+	if((submitPending + m_packedGifPendingQwords) >= REGISTERWRITEBUFFER_SUBMIT_THRESHOLD)
 	{
 		SubmitWriteBuffer();
 	}
@@ -723,13 +747,15 @@ void CGSHandler::SubmitWriteBuffer()
 
 	auto bufferStart = m_currentWriteBuffer + m_writeBufferSubmitIndex;
 	auto bufferEnd = m_currentWriteBuffer + m_writeBufferSize;
+	auto kinds = m_threadedGif ? m_packedGifKinds[m_writeBufferIndex].get() + m_writeBufferSubmitIndex : nullptr;
 
 	SendGSCall(
-	    [this, bufferStart, bufferEnd]() {
-		    SubmitWriteBufferImpl(bufferStart, bufferEnd);
+	    [this, bufferStart, bufferEnd, kinds]() {
+		    SubmitWriteBufferImpl(bufferStart, bufferEnd, kinds);
 	    });
 
 	m_writeBufferSubmitIndex = m_writeBufferSize;
+	m_packedGifPendingQwords = 0;
 }
 
 void CGSHandler::FlushWriteBuffer()
@@ -744,7 +770,85 @@ void CGSHandler::FlushWriteBuffer()
 	m_writeBufferIndex++;
 	m_writeBufferIndex %= MAX_INFLIGHT_FRAMES;
 	m_currentWriteBuffer = m_writeBuffers[m_writeBufferIndex];
+	m_packedGifBytes = 0;
+	m_packedGifSpanCount = 0;
 	//Nothing should be written to the buffer after that
+}
+
+bool CGSHandler::QueuePackedGif(const void* data, uint32 count, uint64 regs, uint32 regCount, uint32 startReg, uint32 q)
+{
+	if(!m_threadedGif || !count || regCount < 1 || regCount > 16 || startReg >= regCount) return false;
+	if(count > (PACKED_GIF_BYTES - m_packedGifBytes) / 16 || m_packedGifSpanCount == PACKED_GIF_SPANS || m_writeBufferSize == REGISTERWRITEBUFFER_SIZE) return false;
+	for(uint32 reg = 0; reg < regCount; reg++)
+	{
+		auto desc = (regs >> (reg * 4)) & 15;
+		if(desc == 11 || desc == 12 || desc == 14) return false;
+	}
+	auto destination = m_packedGifData[m_writeBufferIndex].get() + m_packedGifBytes;
+	memcpy(destination, data, count * 16);
+	auto& span = m_packedGifSpans[m_writeBufferIndex][m_packedGifSpanCount++];
+	span = {destination, regs, count, regCount, startReg, q};
+	m_packedGifBytes += count * 16;
+	m_packedGifPendingQwords += count;
+	WriteRegister(RegisterWrite(PACKED_GIF_WRITE, reinterpret_cast<uintptr_t>(&span)));
+	m_packedGifKinds[m_writeBufferIndex][m_writeBufferSize - 1] = 1;
+	return true;
+}
+
+void CGSHandler::ProcessPackedGifImpl(const PACKEDGIFSPAN& span)
+{
+	uint32 q = span.q;
+	uint32 regIndex = span.startReg;
+	for(uint32 i = 0; i < span.count; i++)
+	{
+		uint128 packet;
+		memcpy(&packet, span.data + i * 16, 16);
+		auto desc = (span.regs >> (regIndex * 4)) & 15;
+		uint64 value = 0;
+		uint8 reg = static_cast<uint8>(desc);
+		switch(desc)
+		{
+		case 0:
+			value = packet.nV0;
+			break;
+		case 1:
+			value = (packet.nV[0] & 255) | ((packet.nV[1] & 255) << 8) | ((packet.nV[2] & 255) << 16) | ((packet.nV[3] & 255) << 24) | (static_cast<uint64>(q) << 32);
+			break;
+		case 2:
+			q = packet.nV2;
+			value = packet.nD0;
+			break;
+		case 3:
+			value = (packet.nV[0] & 0x7FFF) | ((packet.nV[1] & 0x7FFF) << 16);
+			break;
+		case 4:
+			value = (packet.nV[0] & 0xFFFF) | ((packet.nV[1] & 0xFFFF) << 16) | (static_cast<uint64>(packet.nV[2] & 0x0FFFFFF0) << 28) | (static_cast<uint64>(packet.nV[3] & 0xFF0) << 52);
+			if(packet.nV[3] & 0x8000) reg = GS_REG_XYZF3;
+			break;
+		case 5:
+			value = (packet.nV[0] & 0xFFFF) | ((packet.nV[1] & 0xFFFF) << 16) | (static_cast<uint64>(packet.nV[2]) << 32);
+			if(packet.nV[3] & 0x8000) reg = GS_REG_XYZ3;
+			break;
+		case 6:
+		case 7:
+		case 8:
+		case 9:
+		case 13:
+			value = packet.nD0;
+			break;
+		case 10:
+			value = (packet.nD1 >> 36) << 56;
+			break;
+		case 15:
+			break;
+		default:
+			assert(false);
+			break;
+		}
+		if(desc != 15) WriteRegisterImpl(reg, value);
+		regIndex++;
+		if(regIndex == span.regCount) regIndex = 0;
+	}
 }
 
 void CGSHandler::WriteRegisterImpl(uint8 nRegister, uint64 nData)
@@ -867,11 +971,16 @@ void CGSHandler::ReadImageDataImpl(void* ptr, uint32 size)
 	((this)->*(m_transferReadHandlers[bltBuf.nSrcPsm]))(ptr, size);
 }
 
-void CGSHandler::SubmitWriteBufferImpl(const RegisterWrite* writeStart, const RegisterWrite* writeEnd)
+void CGSHandler::SubmitWriteBufferImpl(const RegisterWrite* writeStart, const RegisterWrite* writeEnd, const uint8* kinds)
 {
 	for(auto write = writeStart; write != writeEnd; write++)
 	{
-		WriteRegisterImpl(write->first, write->second);
+		if(kinds && kinds[write - writeStart])
+		{
+			ProcessPackedGifImpl(*reinterpret_cast<const PACKEDGIFSPAN*>(static_cast<uintptr_t>(write->second)));
+		}
+		else
+			WriteRegisterImpl(write->first, write->second);
 	}
 
 #ifdef _DEBUG

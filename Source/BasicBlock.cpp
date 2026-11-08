@@ -1,4 +1,5 @@
 #include "BasicBlock.h"
+#include "JitFunction.h"
 #include "MemStream.h"
 #include "offsetof_def.h"
 #include "MipsJitter.h"
@@ -330,7 +331,11 @@ void CBasicBlock::CompileEpilog(CMipsJitter* jitter, bool loopsOnItself)
 
 void CBasicBlock::Execute()
 {
+#ifdef AOT_USE_CACHE
 	m_function(&m_context);
+#else
+	ExecuteJitFunction(m_function, &m_context);
+#endif
 
 	assert(m_context.m_State.nGPR[0].nV0 == 0);
 	assert(m_context.m_State.nGPR[0].nV1 == 0);

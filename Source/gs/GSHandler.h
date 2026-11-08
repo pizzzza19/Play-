@@ -852,11 +852,15 @@ public:
 
 	void FeedImageData(const void*, uint32);
 	void ReadImageData(void*, uint32);
+	// Copies ordinary packed GIF data into frame-owned immutable storage.
+	// A+D (including SIGNAL/FINISH/LABEL) stays on the producer.
+	bool QueuePackedGif(const void*, uint32, uint64, uint32, uint32, uint32);
 
 	inline void WriteRegister(const RegisterWrite& write)
 	{
 		assert(m_writeBufferSize < REGISTERWRITEBUFFER_SIZE);
 		if(m_writeBufferSize == REGISTERWRITEBUFFER_SIZE) return;
+		if(m_threadedGif) m_packedGifKinds[m_writeBufferIndex][m_writeBufferSize] = 0;
 		m_currentWriteBuffer[m_writeBufferSize++] = write;
 	}
 
@@ -915,7 +919,7 @@ protected:
 	enum
 	{
 		REGISTERWRITEBUFFER_SIZE = 0x140000,
-		REGISTERWRITEBUFFER_SUBMIT_THRESHOLD = 0x100
+		REGISTERWRITEBUFFER_SUBMIT_THRESHOLD = 0x1000
 	};
 
 	enum LOD_CALC
@@ -1043,7 +1047,17 @@ protected:
 	virtual void WriteRegisterImpl(uint8, uint64);
 	void FeedImageDataImpl(const uint8*, uint32);
 	void ReadImageDataImpl(void*, uint32);
-	void SubmitWriteBufferImpl(const RegisterWrite*, const RegisterWrite*);
+	void SubmitWriteBufferImpl(const RegisterWrite*, const RegisterWrite*, const uint8* = nullptr);
+	struct PACKEDGIFSPAN
+	{
+		const uint8* data = nullptr;
+		uint64 regs = 0;
+		uint32 count = 0;
+		uint32 regCount = 0;
+		uint32 startReg = 0;
+		uint32 q = 0;
+	};
+	void ProcessPackedGifImpl(const PACKEDGIFSPAN&);
 
 	void UpdateFrameDumpState();
 
@@ -1114,6 +1128,16 @@ protected:
 
 	static constexpr int MAX_INFLIGHT_FRAMES = 2;
 	RegisterWrite* m_writeBuffers[MAX_INFLIGHT_FRAMES] = {};
+	static constexpr uint8 PACKED_GIF_WRITE = 0xFF;
+	static constexpr uint32 PACKED_GIF_BYTES = 16 * 1024 * 1024;
+	static constexpr uint32 PACKED_GIF_SPANS = 65536;
+	std::unique_ptr<uint8[]> m_packedGifData[MAX_INFLIGHT_FRAMES];
+	std::unique_ptr<PACKEDGIFSPAN[]> m_packedGifSpans[MAX_INFLIGHT_FRAMES];
+	std::unique_ptr<uint8[]> m_packedGifKinds[MAX_INFLIGHT_FRAMES];
+	uint32 m_packedGifBytes = 0;
+	uint32 m_packedGifSpanCount = 0;
+	uint32 m_packedGifPendingQwords = 0;
+	bool m_threadedGif = false;
 
 	RegisterWrite* m_currentWriteBuffer = nullptr;
 	uint32 m_writeBufferIndex = 0;
