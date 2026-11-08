@@ -492,6 +492,8 @@ set(COMMON_SRC_FILES
 	Pch.h
 	PH_Generic.cpp
 	PH_Generic.h
+	JitFunction.cpp
+	JitFunction.h
 	Profiler.cpp
 	Profiler.h
 	Ps2Const.h

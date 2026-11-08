@@ -105,6 +105,36 @@ void CGIF::SaveState(Framework::CZipArchiveWriter& archive)
 uint32 CGIF::ProcessPacked(const uint8* memory, uint32 address, uint32 end)
 {
 	uint32 start = address;
+	if(m_loops && address < end)
+	{
+		const auto firstReg = m_regs - m_regsTemp;
+		const auto remaining = static_cast<uint32>(m_loops) * m_regs - firstReg;
+		const auto count = std::min(remaining, (end - address) / 16);
+		if(m_gs->QueuePackedGif(memory + address, count, m_regList, m_regs, firstReg, m_qtemp))
+		{
+			// Only ST changes the producer's Q state. Locate its last occurrence
+			// without unpacking all the ordinary geometry registers here.
+			uint32 lastSt = 0;
+			bool hasSt = false;
+			for(uint32 reg = 0; reg < m_regs; reg++)
+			{
+				if(((m_regList >> (reg * 4)) & 15) != 2) continue;
+				uint32 index = (reg + m_regs - firstReg) % m_regs;
+				if(index >= count) continue;
+				index += ((count - 1 - index) / m_regs) * m_regs;
+				if(!hasSt || index > lastSt)
+				{
+					hasSt = true;
+					lastSt = index;
+				}
+			}
+			if(hasSt) memcpy(&m_qtemp, memory + address + lastSt * 16 + 8, sizeof(m_qtemp));
+			const auto consumed = firstReg + count;
+			m_loops -= consumed / m_regs;
+			m_regsTemp = m_regs - (consumed % m_regs);
+			return count * 16;
+		}
+	}
 
 	while((m_loops != 0) && (address < end))
 	{
